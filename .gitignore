@@ -1,0 +1,17 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# tfvars 는 비밀값을 담을 수 있어 전체 ignore.
+# 환경 설정값은 *.tfvars.example 파일로 커밋하고, 각자 복사해서 채웁니다.
+*.tfvars
+*.tfvars.json
+
+# .terraform.lock.hcl 은 '커밋합니다' (provider 버전 잠금 — 재현성 보장)
