@@ -27,14 +27,14 @@ resource "aws_security_group" "redis" {
 
 # 허용된 보안 그룹(EKS 노드 등)마다 6379 인바운드 규칙 생성
 resource "aws_vpc_security_group_ingress_rule" "redis" {
-  for_each = toset(var.allowed_security_group_ids)
+  count    = length(var.allowed_security_group_ids)
 
   security_group_id            = aws_security_group.redis.id
-  referenced_security_group_id = each.value
+  referenced_security_group_id = var.allowed_security_group_ids[count.index]
   from_port                    = var.port
   to_port                      = var.port
   ip_protocol                  = "tcp"
-  description                  = "Redis from ${each.value}"
+  description                  = "Redis from ${var.allowed_security_group_ids[count.index]}"
 }
 
 # 아웃바운드 전체 허용 (Terraform 생성 SG는 기본 egress가 없음)
