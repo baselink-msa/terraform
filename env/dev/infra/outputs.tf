@@ -42,3 +42,28 @@ output "internet_gateway_id" {
   description = "ID of the internet gateway."
   value       = module.vpc.internet_gateway_id
 }
+
+output "eks_cluster_name" {
+  description = "Name of the dev EKS cluster."
+  value       = module.eks.cluster_name
+}
+
+output "eks_cluster_endpoint" {
+  description = "Endpoint of the dev EKS cluster."
+  value       = module.eks.cluster_endpoint
+}
+
+output "rds_endpoint" {
+  description = "Endpoint of the dev RDS instance."
+  value       = module.rds.db_instance_endpoint
+}
+
+output "redis_primary_endpoint" {
+  description = "Primary endpoint of the dev Redis replication group."
+  value       = module.elasticache.primary_endpoint_address
+}
+
+output "ticket_confirm_queue_url" {
+  description = "URL of the ticket confirmation SQS queue."
+  value       = module.sqs_ticket_confirm.queue_url
+}
