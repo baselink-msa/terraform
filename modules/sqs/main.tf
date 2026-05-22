@@ -1,6 +1,9 @@
-###############################################################################
-# modules/sqs/main.tf
-#
-# TODO: sqs 모듈 담당자가 리소스를 작성하세요.
-#       (의도적으로 비워둔 스텁 파일입니다)
-###############################################################################
+resource "aws_sqs_queue" "this" {
+  name                      = var.queue_name
+  delay_seconds             = var.delay_seconds
+  max_message_size          = var.max_message_size
+  message_retention_seconds = var.message_retention_seconds
+  receive_wait_time_seconds = var.receive_wait_time_seconds
+
+  tags = var.tags
+}

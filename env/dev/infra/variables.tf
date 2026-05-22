@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 ###############################################################################
 # environments/dev/infra/variables.tf
@@ -5,6 +6,8 @@
 # TODO: 이 레이어 root에서 받을 변수를 정의하세요. (필요 시)
 ###############################################################################
 =======
+=======
+>>>>>>> fd28e0c2718c6b6a4e1aab5132e9e537d5ae99e6
 variable "aws_region" {
   description = "AWS region where regional resources are created."
   type        = string
@@ -96,6 +99,7 @@ variable "eks_cluster_name" {
   default     = ""
 }
 
+<<<<<<< HEAD
 variable "eks" {
   description = "EKS 모듈에 전달할 설정 객체. 필드 구조는 modules/eks/variables.tf 참조."
   type        = any
@@ -105,3 +109,5 @@ variable "elasticache" {
   description = "ElastiCache(Redis) 모듈에 전달할 설정 객체. 필드 구조는 modules/elasticache/variables.tf 참조."
   type        = any
 }
+=======
+>>>>>>> fd28e0c2718c6b6a4e1aab5132e9e537d5ae99e6
