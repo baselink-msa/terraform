@@ -27,7 +27,7 @@ resource "aws_security_group" "redis" {
 
 # 허용된 보안 그룹(EKS 노드 등)마다 6379 인바운드 규칙 생성
 resource "aws_vpc_security_group_ingress_rule" "redis" {
-  count    = length(var.allowed_security_group_ids)
+  count = length(var.allowed_security_group_ids)
 
   security_group_id            = aws_security_group.redis.id
   referenced_security_group_id = var.allowed_security_group_ids[count.index]

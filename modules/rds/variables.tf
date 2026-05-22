@@ -1,62 +1,75 @@
 variable "identifier" {
-  description = "RDS 인스턴스 식별자 (예: baseball-db-dev)"
+  description = "RDS instance identifier."
   type        = string
 }
 
 variable "engine_version" {
-  type    = string
-  default = "16.3" # Docker 환경(postgres:16)과 동일
+  description = "PostgreSQL engine version."
+  type        = string
+  default     = "16.3"
 }
 
 variable "instance_class" {
-  type    = string
-  default = "db.t4g.micro" # 가성비 좋은 ARM 기반 인스턴스
+  description = "RDS instance class."
+  type        = string
+  default     = "db.t4g.micro"
 }
 
 variable "allocated_storage" {
-  type    = number
-  default = 20
+  description = "Allocated storage in GiB."
+  type        = number
+  default     = 20
 }
 
 variable "db_name" {
-  type    = string
-  default = "baseball_platform"
+  description = "Initial database name."
+  type        = string
+  default     = "baseball_platform"
 }
 
 variable "username" {
-  type    = string
-  default = "baseball"
+  description = "Master username."
+  type        = string
+  default     = "baseball"
 }
 
 variable "password" {
-  description = "데이터베이스 마스터 비밀번호 (tfvars에서 주입해야 함)"
+  description = "Master password. Ignored when manage_master_user_password is true."
   type        = string
-  sensitive   = true # 콘솔 화면에 비밀번호가 노출되지 않도록 마스킹 처리
+  default     = null
+  sensitive   = true
+}
+
+variable "manage_master_user_password" {
+  description = "Whether AWS Secrets Manager manages the master password."
+  type        = bool
+  default     = true
 }
 
 variable "vpc_security_group_ids" {
-  description = "적용할 보안 그룹 ID 리스트"
+  description = "Security group IDs attached to the RDS instance."
   type        = list(string)
-  default     = []
 }
 
 variable "db_subnet_group_name" {
-  description = "DB 서브넷 그룹 이름"
+  description = "DB subnet group name."
   type        = string
-  default     = ""
 }
 
 variable "skip_final_snapshot" {
-  type    = bool
-  default = true # 개발 환경에서는 true 권장
+  description = "Whether to skip final snapshot on destroy."
+  type        = bool
+  default     = true
 }
 
 variable "publicly_accessible" {
-  type    = bool
-  default = false
+  description = "Whether the DB instance is publicly accessible."
+  type        = bool
+  default     = false
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags applied to resources."
+  type        = map(string)
+  default     = {}
 }
