@@ -1,5 +1,12 @@
-###############################################################################
-# environments/dev/infra/providers.tf
-#
-# TODO: aws provider를 설정하세요. (region 등)
-###############################################################################
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
