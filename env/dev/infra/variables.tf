@@ -1,10 +1,3 @@
-<<<<<<< Updated upstream
-###############################################################################
-# environments/dev/infra/variables.tf
-#
-# TODO: 이 레이어 root에서 받을 변수를 정의하세요. (필요 시)
-###############################################################################
-=======
 variable "aws_region" {
   description = "AWS region where regional resources are created."
   type        = string
