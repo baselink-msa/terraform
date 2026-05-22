@@ -89,3 +89,14 @@ variable "eks_cluster_name" {
   default     = ""
 }
 
+
+variable "eks" {
+  description = "EKS 모듈에 전달할 설정 객체. 필드 구조는 modules/eks/variables.tf 참조."
+  type        = any
+}
+
+variable "elasticache" {
+  description = "ElastiCache(Redis) 모듈에 전달할 설정 객체. 필드 구조는 modules/elasticache/variables.tf 참조."
+  type        = any
+}
+
