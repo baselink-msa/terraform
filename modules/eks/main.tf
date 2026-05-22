@@ -61,9 +61,9 @@ resource "aws_kms_alias" "eks" {
 
 # secrets 암호화 활성화 시, 클러스터 역할이 KMS 키를 쓰도록 허용
 resource "aws_iam_role_policy" "cluster_kms" {
-  count  = var.enable_secrets_encryption ? 1 : 0
-  name   = "${var.cluster_name}-cluster-kms"
-  role   = aws_iam_role.cluster.id
+  count = var.enable_secrets_encryption ? 1 : 0
+  name  = "${var.cluster_name}-cluster-kms"
+  role  = aws_iam_role.cluster.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

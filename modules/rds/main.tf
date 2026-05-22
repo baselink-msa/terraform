@@ -7,7 +7,9 @@ resource "aws_db_instance" "this" {
 
   db_name  = var.db_name
   username = var.username
-  password = var.password # Apply 시 외부에서 주입받음
+
+  password                    = var.manage_master_user_password ? null : var.password
+  manage_master_user_password = var.manage_master_user_password
 
   vpc_security_group_ids = var.vpc_security_group_ids
   db_subnet_group_name   = var.db_subnet_group_name
