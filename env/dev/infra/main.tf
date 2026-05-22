@@ -26,10 +26,27 @@ module "vpc" {
 module "eks" {
   source = "../../../modules/eks"
 
+  # ─── 배선 (다른 모듈 output) ───
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_app_subnet_ids
+
+  # ─── 클러스터 이름은 local 사용 (VPC 서브넷 태그와 맞춰야 해서) ───
   cluster_name = local.cluster_name
-  vpc_id       = module.vpc.vpc_id
-  subnet_ids   = module.vpc.private_app_subnet_ids
-  tags         = local.common_tags
+
+  # ─── tfvars 의 eks = {...} 객체에서 꺼내쓰기 ───
+  kubernetes_version         = var.eks.kubernetes_version
+  system_node_instance_types = var.eks.system_node_instance_types
+  system_node_capacity_type  = var.eks.system_node_capacity_type
+  system_node_desired_size   = var.eks.system_node_desired_size
+  system_node_min_size       = var.eks.system_node_min_size
+  system_node_max_size       = var.eks.system_node_max_size
+  endpoint_public_access     = var.eks.endpoint_public_access
+  endpoint_private_access    = var.eks.endpoint_private_access
+  public_access_cidrs        = var.eks.public_access_cidrs
+  enable_secrets_encryption  = var.eks.enable_secrets_encryption
+
+  # ─── 태그는 공통 + tfvars 머지 ───
+  tags = merge(local.common_tags, var.eks.tags)
 }
 
 resource "aws_db_subnet_group" "rds" {
@@ -82,11 +99,28 @@ module "rds" {
 module "elasticache" {
   source = "../../../modules/elasticache"
 
-  name                       = local.name_prefix
+  # ─── 배선 ───
   vpc_id                     = module.vpc.vpc_id
   subnet_ids                 = module.vpc.private_data_subnet_ids
   allowed_security_group_ids = [module.eks.cluster_security_group_id]
-  tags                       = local.common_tags
+
+  # ─── tfvars 의 elasticache = {...} 객체에서 ───
+  name                       = var.elasticache.name
+  engine                     = var.elasticache.engine
+  engine_version             = var.elasticache.engine_version
+  parameter_group_family     = var.elasticache.parameter_group_family
+  node_type                  = var.elasticache.node_type
+  num_cache_clusters         = var.elasticache.num_cache_clusters
+  automatic_failover_enabled = var.elasticache.automatic_failover_enabled
+  multi_az_enabled           = var.elasticache.multi_az_enabled
+  maxmemory_policy           = var.elasticache.maxmemory_policy
+  at_rest_encryption_enabled = var.elasticache.at_rest_encryption_enabled
+  transit_encryption_enabled = var.elasticache.transit_encryption_enabled
+  snapshot_retention_limit   = var.elasticache.snapshot_retention_limit
+  apply_immediately          = var.elasticache.apply_immediately
+
+  # ─── 태그 ───
+  tags = merge(local.common_tags, var.elasticache.tags)
 }
 
 module "sqs_ticket_confirm" {
