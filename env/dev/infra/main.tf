@@ -129,3 +129,110 @@ module "sqs_ticket_confirm" {
   queue_name = "ticket-confirm-queue"
   tags       = local.common_tags
 }
+
+resource "aws_iam_role_policy" "eks_node_backend_runtime" {
+  name = "${local.name_prefix}-backend-runtime"
+  role = split("/", module.eks.node_role_arn)[1]
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TicketConfirmQueueAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = module.sqs_ticket_confirm.queue_arn
+      },
+      {
+        Sid    = "ChatbotBedrockAccess"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock-agent-runtime:Retrieve",
+          "bedrock-agent-runtime:RetrieveAndGenerate"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+locals {
+  eks_oidc_issuer = replace(module.eks.oidc_provider_url, "https://", "")
+}
+
+data "aws_iam_policy_document" "backend_runtime_irsa_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.eks_oidc_issuer}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.eks_oidc_issuer}:sub"
+      values   = ["system:serviceaccount:baselink-dev:backend-runtime"]
+    }
+  }
+}
+
+resource "aws_iam_role" "backend_runtime_irsa" {
+  name               = "${local.name_prefix}-backend-runtime-irsa"
+  assume_role_policy = data.aws_iam_policy_document.backend_runtime_irsa_assume_role.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy" "backend_runtime_irsa" {
+  name = "${local.name_prefix}-backend-runtime"
+  role = aws_iam_role.backend_runtime_irsa.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TicketConfirmQueueAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = module.sqs_ticket_confirm.queue_arn
+      },
+      {
+        Sid    = "ChatbotBedrockAccess"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock-agent-runtime:Retrieve",
+          "bedrock-agent-runtime:RetrieveAndGenerate"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+output "backend_runtime_irsa_role_arn" {
+  description = "IAM role ARN used by the backend-runtime Kubernetes service account."
+  value       = aws_iam_role.backend_runtime_irsa.arn
+}
