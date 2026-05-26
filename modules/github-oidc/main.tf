@@ -18,12 +18,12 @@ resource "aws_iam_role" "github_actions" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
+      Effect    = "Allow"
       Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
-      Action = "sts:AssumeRoleWithWebIdentity"
+      Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringLike   = { "token.actions.githubusercontent.com:sub": "repo:${var.github_repo}:*" }
-        StringEquals = { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" : "repo:${var.github_repo}:*" }
+        StringEquals = { "token.actions.githubusercontent.com:aud" : "sts.amazonaws.com" }
       }
     }]
   })
@@ -43,8 +43,8 @@ resource "aws_iam_role_policy" "ecr_push" {
         Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "ecr:BatchCheckLayerAvailability",
           "ecr:CompleteLayerUpload",
           "ecr:InitiateLayerUpload",
