@@ -10,7 +10,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.0, < 6.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -70,6 +70,73 @@ resource "helm_release" "argo_cd" {
       name  = "imageUpdater.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
       value = aws_iam_role.argocd_image_updater[0].arn
     }
+  }
+
+  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
+  # argo-cd 차트는 global.tolerations 를 지원하지 않으므로 컴포넌트별로 설정
+  set {
+    name  = "controller.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "controller.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "controller.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  set {
+    name  = "server.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "server.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "server.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  set {
+    name  = "repoServer.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "repoServer.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "repoServer.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  set {
+    name  = "applicationSet.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "applicationSet.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "applicationSet.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  set {
+    name  = "redis.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "redis.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "redis.tolerations[0].effect"
+    value = "NoSchedule"
   }
 
   # 추가 values (YAML 문자열 — 비어있으면 compact()가 빈 리스트로 만들어 무시)

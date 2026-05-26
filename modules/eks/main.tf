@@ -7,7 +7,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.0, < 6.0"
     }
     tls = {
       source  = "hashicorp/tls"
@@ -175,6 +175,14 @@ resource "aws_eks_node_group" "system" {
   # 시스템 노드임을 표시하는 라벨 (워크로드 배치 정책에 활용 가능)
   labels = {
     role = "system"
+  }
+
+  # 일반 앱 파드가 시스템 노드에 배치되지 않도록 막는 taint
+  # CriticalAddonsOnly toleration 을 가진 시스템 파드(Karpenter·CoreDNS·KEDA·ArgoCD)만 허용
+  taint {
+    key    = "CriticalAddonsOnly"
+    value  = "true"
+    effect = "NO_SCHEDULE"
   }
 
   # OS 업데이트 시 한 번에 한 대만 교체
