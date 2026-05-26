@@ -1,7 +1,61 @@
 ###############################################################################
 # environments/dev/addon/providers.tf
-#
-# TODO: aws + helm + kubectl provider를 설정하세요.
-#       helm/kubectl provider는 infra 레이어의 remote_state에서
-#       클러스터 엔드포인트·CA를 읽어 구성합니다.
 ###############################################################################
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = ">= 2.12, < 3.0"
+    }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = ">= 1.14"
+    }
+  }
+}
+
+provider "aws" {
+  region  = var.aws_region
+  profile = var.aws_profile
+
+  default_tags {
+    tags = {
+      Env     = "DEV"
+      Service = "bl"
+    }
+  }
+}
+
+data "terraform_remote_state" "infra" {
+  backend = "s3"
+
+  config = {
+    bucket = "baselink-tfstate-740831361032"
+    key    = "dev/infra/terraform.tfstate"
+    region = var.aws_region
+  }
+}
+
+data "aws_eks_cluster_auth" "this" {
+  name = data.terraform_remote_state.infra.outputs.eks_cluster_name
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = data.terraform_remote_state.infra.outputs.eks_cluster_endpoint
+    cluster_ca_certificate = base64decode(data.terraform_remote_state.infra.outputs.eks_cluster_certificate_authority_data)
+    token                  = data.aws_eks_cluster_auth.this.token
+  }
+}
+
+provider "kubectl" {
+  host                   = data.terraform_remote_state.infra.outputs.eks_cluster_endpoint
+  cluster_ca_certificate = base64decode(data.terraform_remote_state.infra.outputs.eks_cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.this.token
+  load_config_file       = false
+}

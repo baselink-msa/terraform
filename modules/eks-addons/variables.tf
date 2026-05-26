@@ -8,6 +8,16 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region where the EKS cluster exists."
+  type        = string
+}
+
+variable "vpc_id" {
+  description = "VPC ID where the EKS cluster runs. Used by AWS Load Balancer Controller."
+  type        = string
+}
+
 variable "oidc_provider_arn" {
   description = "IAM OIDC provider ARN (eks 모듈의 oidc_provider_arn output)"
   type        = string
@@ -41,6 +51,18 @@ variable "keda_version" {
   default     = "2.19.0"
 }
 
+variable "aws_load_balancer_controller_version" {
+  description = "AWS Load Balancer Controller Helm chart version."
+  type        = string
+  default     = "1.14.0"
+}
+
+variable "aws_load_balancer_controller_policy_url" {
+  description = "Official IAM policy JSON URL for AWS Load Balancer Controller."
+  type        = string
+  default     = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.14.1/docs/install/iam_policy.json"
+}
+
 #--- 네임스페이스 ------------------------------------------------------------
 variable "karpenter_namespace" {
   description = "Karpenter 설치 네임스페이스"
@@ -58,6 +80,12 @@ variable "keda_namespace" {
   description = "KEDA 설치 네임스페이스"
   type        = string
   default     = "keda"
+}
+
+variable "aws_load_balancer_controller_namespace" {
+  description = "Namespace for AWS Load Balancer Controller."
+  type        = string
+  default     = "kube-system"
 }
 
 #--- 중단 알림 큐 ------------------------------------------------------------
