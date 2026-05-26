@@ -84,7 +84,27 @@ data "aws_iam_policy_document" "karpenter_controller" {
       "ec2:DeleteLaunchTemplate",
     ]
     resources = ["*"]
-    # prod에서는 ec2:ResourceTag 조건으로 범위를 좁히는 것을 권장
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/karpenter.sh/managed-by"
+      values   = [var.cluster_name]
+    }
+  }
+
+  # Karpenter가 자신이 만든 리소스를 삭제/종료할 수 있도록 허용
+  statement {
+    sid    = "KarpenterEC2WriteTagged"
+    effect = "Allow"
+    actions = [
+      "ec2:TerminateInstances",
+      "ec2:DeleteLaunchTemplate",
+    ]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/karpenter.sh/managed-by"
+      values   = [var.cluster_name]
+    }
   }
 
   # 인스턴스 타입·AMI·서브넷 등 조회
@@ -286,6 +306,9 @@ resource "helm_release" "karpenter" {
   chart      = "karpenter"
   version    = var.karpenter_version
 
+  atomic  = true
+  timeout = 600
+
   # 컨트롤러 ServiceAccount에 IRSA 역할 연결
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
@@ -303,6 +326,12 @@ resource "helm_release" "karpenter" {
       name  = "settings.interruptionQueue"
       value = aws_sqs_queue.karpenter_interruption[0].name
     }
+  }
+
+  # Controller HA — 2 replicas
+  set {
+    name  = "replicas"
+    value = var.karpenter_replicas
   }
 
   set {
@@ -342,6 +371,9 @@ resource "helm_release" "keda" {
   repository = "https://kedacore.github.io/charts"
   chart      = "keda"
   version    = var.keda_version
+
+  atomic  = true
+  timeout = 600
 }
 
 #==============================================================================
@@ -413,6 +445,9 @@ resource "kubectl_manifest" "nodepool" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         consolidateAfter    = "1m"
+        budgets = [
+          { nodes = "10%" }
+        ]
       }
     }
   })

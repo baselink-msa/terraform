@@ -89,6 +89,9 @@ resource "aws_eks_cluster" "this" {
     public_access_cidrs     = var.public_access_cidrs
   }
 
+  # Control plane logging — API audit·인증·스케줄러 로그를 CloudWatch로 전송
+  enabled_cluster_log_types = var.cluster_log_types
+
   access_config {
     authentication_mode                         = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
@@ -161,6 +164,7 @@ resource "aws_eks_node_group" "system" {
 
   instance_types = var.system_node_instance_types
   capacity_type  = var.system_node_capacity_type
+  disk_size      = var.system_node_disk_size
 
   scaling_config {
     desired_size = var.system_node_desired_size

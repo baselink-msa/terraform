@@ -45,22 +45,35 @@ variable "endpoint_private_access" {
 }
 
 variable "public_access_cidrs" {
-  description = "public 엔드포인트 접근을 허용할 CIDR 목록 (prod에서는 사무실 IP 등으로 좁힐 것)"
+  description = "public 엔드포인트 접근을 허용할 CIDR 목록 (반드시 사무실/VPN IP로 제한할 것)"
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = []
+}
+
+#--- Control Plane 로깅 -------------------------------------------------------
+variable "cluster_log_types" {
+  description = "CloudWatch로 전송할 EKS control plane 로그 유형"
+  type        = list(string)
+  default     = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 }
 
 #--- 시스템 노드그룹 ----------------------------------------------------------
 variable "system_node_instance_types" {
-  description = "시스템 노드그룹 인스턴스 타입"
+  description = "시스템 노드그룹 인스턴스 타입 (Graviton 권장)"
   type        = list(string)
-  default     = ["t3.large"]
+  default     = ["t4g.large"]
 }
 
 variable "system_node_capacity_type" {
   description = "노드 구매 옵션 (ON_DEMAND 또는 SPOT)"
   type        = string
   default     = "ON_DEMAND"
+}
+
+variable "system_node_disk_size" {
+  description = "시스템 노드그룹 EBS 디스크 크기(GiB). 컨테이너 이미지 캐시를 고려해 50 이상 권장"
+  type        = number
+  default     = 50
 }
 
 variable "system_node_desired_size" {

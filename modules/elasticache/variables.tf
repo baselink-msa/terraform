@@ -110,9 +110,36 @@ variable "auth_token" {
 
 #--- 운영 옵션 ---------------------------------------------------------------
 variable "snapshot_retention_limit" {
-  description = "자동 스냅샷 보관 일수 (0 = 비활성)"
+  description = "자동 스냅샷 보관 일수 (0 = 비활성, 최소 1 권장)"
   type        = number
-  default     = 0
+  default     = 1
+}
+
+variable "snapshot_window" {
+  description = "일일 자동 스냅샷 시간대 (UTC, 예: 18:00-19:00 = KST 03:00-04:00)"
+  type        = string
+  default     = "18:00-19:00"
+}
+
+variable "maintenance_window" {
+  description = "주간 유지보수 윈도우 (UTC, 예: sun:19:00-sun:20:00 = KST 월 04:00-05:00)"
+  type        = string
+  default     = "sun:19:00-sun:20:00"
+}
+
+variable "notification_topic_arn" {
+  description = "장애·failover 이벤트를 받을 SNS 토픽 ARN (null이면 비활성)"
+  type        = string
+  default     = null
+}
+
+variable "extra_parameters" {
+  description = "파라미터 그룹에 추가할 Redis 파라미터 목록"
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default = []
 }
 
 variable "apply_immediately" {
