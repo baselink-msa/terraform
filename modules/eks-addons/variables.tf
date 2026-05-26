@@ -48,6 +48,12 @@ variable "karpenter_namespace" {
   default     = "karpenter"
 }
 
+variable "karpenter_replicas" {
+  description = "Karpenter controller replica 수 (HA를 위해 2 권장)"
+  type        = number
+  default     = 2
+}
+
 variable "keda_namespace" {
   description = "KEDA 설치 네임스페이스"
   type        = string
@@ -77,7 +83,7 @@ variable "node_capacity_types" {
 variable "node_arch" {
   description = "노드 CPU 아키텍처 (amd64 / arm64)"
   type        = list(string)
-  default     = ["amd64"]
+  default     = ["amd64", "arm64"]
 }
 
 variable "node_instance_categories" {

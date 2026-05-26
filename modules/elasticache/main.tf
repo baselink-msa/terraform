@@ -67,6 +67,14 @@ resource "aws_elasticache_parameter_group" "this" {
     value = var.maxmemory_policy
   }
 
+  dynamic "parameter" {
+    for_each = var.extra_parameters
+    content {
+      name  = parameter.value.name
+      value = parameter.value.value
+    }
+  }
+
   tags = var.tags
 }
 
@@ -100,8 +108,15 @@ resource "aws_elasticache_replication_group" "this" {
   transit_encryption_enabled = var.transit_encryption_enabled
   auth_token                 = var.auth_token
 
-  # 스냅샷 보관일 (락/캐시 용도라 dev 기본 0 = 비활성)
+  # 스냅샷 보관일 (기본 1일 — 최소한의 복구 지점 확보)
   snapshot_retention_limit = var.snapshot_retention_limit
+  snapshot_window          = var.snapshot_window
+
+  # 유지보수 윈도우 — 패치·업그레이드 적용 시간대
+  maintenance_window = var.maintenance_window
+
+  # SNS 알림 (장애·failover 이벤트 통보)
+  notification_topic_arn = var.notification_topic_arn
 
   # true면 변경을 유지보수 시간대 대기 없이 즉시 적용
   apply_immediately = var.apply_immediately
