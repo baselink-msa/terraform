@@ -53,6 +53,26 @@ output "eks_cluster_endpoint" {
   value       = module.eks.cluster_endpoint
 }
 
+output "eks_cluster_certificate_authority_data" {
+  description = "Base64 encoded certificate authority data for the dev EKS cluster."
+  value       = module.eks.cluster_certificate_authority_data
+}
+
+output "eks_cluster_security_group_id" {
+  description = "Security group ID associated with the dev EKS cluster."
+  value       = module.eks.cluster_security_group_id
+}
+
+output "eks_oidc_provider_arn" {
+  description = "IAM OIDC provider ARN for the dev EKS cluster."
+  value       = module.eks.oidc_provider_arn
+}
+
+output "eks_oidc_provider_url" {
+  description = "IAM OIDC provider URL for the dev EKS cluster."
+  value       = module.eks.oidc_provider_url
+}
+
 output "rds_endpoint" {
   description = "Endpoint of the dev RDS instance."
   value       = module.rds.db_instance_endpoint

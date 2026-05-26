@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/helm"
       version = ">= 2.12, < 3.0"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = ">= 3.4"
+    }
     kubectl = {
       source  = "gavinbunney/kubectl"
       version = ">= 1.14"
@@ -34,6 +38,95 @@ locals {
 
   # Karpenter 컨트롤러 ServiceAccount 이름 (차트 기본값)
   karpenter_sa = "karpenter"
+
+  # AWS Load Balancer Controller ServiceAccount 이름 (차트 기본값)
+  aws_load_balancer_controller_sa = "aws-load-balancer-controller"
+}
+
+#==============================================================================
+# 0) AWS Load Balancer Controller 설치
+#    GitOps 레포의 Ingress가 ALB를 만들 수 있도록 컨트롤러와 IRSA를 준비한다.
+#==============================================================================
+data "http" "aws_load_balancer_controller_policy" {
+  url = var.aws_load_balancer_controller_policy_url
+
+  request_headers = {
+    Accept = "application/json"
+  }
+}
+
+data "aws_iam_policy_document" "aws_load_balancer_controller_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url}:sub"
+      values   = ["system:serviceaccount:${var.aws_load_balancer_controller_namespace}:${local.aws_load_balancer_controller_sa}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "aws_load_balancer_controller" {
+  name               = "${var.cluster_name}-aws-load-balancer-controller"
+  assume_role_policy = data.aws_iam_policy_document.aws_load_balancer_controller_assume.json
+  tags               = var.tags
+}
+
+resource "aws_iam_policy" "aws_load_balancer_controller" {
+  name        = "${var.cluster_name}-AWSLoadBalancerControllerIAMPolicy"
+  description = "IAM policy for AWS Load Balancer Controller on ${var.cluster_name}"
+  policy      = data.http.aws_load_balancer_controller_policy.response_body
+  tags        = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
+  role       = aws_iam_role.aws_load_balancer_controller.name
+  policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
+}
+
+resource "helm_release" "aws_load_balancer_controller" {
+  name             = local.aws_load_balancer_controller_sa
+  namespace        = var.aws_load_balancer_controller_namespace
+  create_namespace = false
+
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = var.aws_load_balancer_controller_version
+
+  set {
+    name  = "clusterName"
+    value = var.cluster_name
+  }
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+  set {
+    name  = "vpcId"
+    value = var.vpc_id
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = local.aws_load_balancer_controller_sa
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.aws_load_balancer_controller.arn
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.aws_load_balancer_controller]
 }
 
 #==============================================================================
