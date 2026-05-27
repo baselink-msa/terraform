@@ -177,3 +177,17 @@ resource "aws_route_table_association" "private_data" {
   subnet_id      = each.value.id
   route_table_id = aws_route_table.private[var.single_nat_gateway ? "0" : each.key].id
 }
+
+data "aws_region" "current" {}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [for key in sort(keys(aws_route_table.private)) : aws_route_table.private[key].id]
+
+  tags = {
+    Name = "${local.name_prefix}-s3-gw"
+  }
+}
