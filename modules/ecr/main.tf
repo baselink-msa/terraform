@@ -9,6 +9,10 @@ resource "aws_ecr_repository" "this" {
     scan_on_push = true
   }
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   tags = {
     Environment = var.environment
     Service     = each.value
