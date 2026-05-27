@@ -72,8 +72,22 @@ resource "helm_release" "argo_cd" {
     }
   }
 
-  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
-  # argo-cd 차트는 global.tolerations 를 지원하지 않으므로 컴포넌트별로 설정
+  # 시스템 노드 taint(CriticalAddonsOnly)를 허용해 system 노드그룹에 배치
+  # redis-secret-init 같은 Helm hook Job은 global.tolerations를 상속한다.
+  set {
+    name  = "global.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "global.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "global.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  # 주요 컴포넌트는 명시적으로도 설정해 차트 기본값 변경에 영향을 덜 받게 한다.
   set {
     name  = "controller.tolerations[0].key"
     value = "CriticalAddonsOnly"
