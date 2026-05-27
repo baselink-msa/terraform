@@ -63,6 +63,16 @@ resource "helm_release" "argo_cd" {
     }
   }
 
+  # rootpath 설정 (ALB path-based 라우팅 시 /argocd 경로로 접근)
+  set {
+    name  = "server.extraArgs[1]"
+    value = "--rootpath=/argocd"
+  }
+  set {
+    name  = "configs.params.server\\.rootpath"
+    value = "/argocd"
+  }
+
   # Image Updater IRSA 활성화 시 ServiceAccount에 역할 ARN 어노테이션 주입
   dynamic "set" {
     for_each = var.enable_image_updater_irsa ? [1] : []
