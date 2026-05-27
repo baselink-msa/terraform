@@ -198,6 +198,44 @@ data "aws_iam_policy_document" "karpenter_controller" {
     }
   }
 
+  # Karpenter v1은 EC2NodeClass 검증 단계에서 EC2 생성 권한을 사전 확인한다.
+  # 이 호출에는 생성 태그 조건이 맞지 않을 수 있어 별도로 허용한다.
+  statement {
+    sid    = "KarpenterProvisioningAuthCheck"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateFleet",
+      "ec2:CreateLaunchTemplate",
+      "ec2:DeleteLaunchTemplate",
+      "ec2:RunInstances",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "KarpenterLaunchTemplateTagging"
+    effect  = "Allow"
+    actions = ["ec2:CreateTags"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values = [
+        "CreateFleet",
+        "CreateLaunchTemplate",
+        "RunInstances",
+      ]
+    }
+  }
+
   # Karpenter가 자신이 만든 리소스를 삭제/종료할 수 있도록 허용
   statement {
     sid    = "KarpenterEC2WriteTagged"
@@ -240,9 +278,12 @@ data "aws_iam_policy_document" "karpenter_controller" {
 
   # 노드 instance profile 확인
   statement {
-    sid       = "KarpenterInstanceProfileRead"
-    effect    = "Allow"
-    actions   = ["iam:GetInstanceProfile"]
+    sid    = "KarpenterInstanceProfileRead"
+    effect = "Allow"
+    actions = [
+      "iam:GetInstanceProfile",
+      "iam:ListInstanceProfiles",
+    ]
     resources = ["*"]
   }
 
