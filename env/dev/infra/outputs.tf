@@ -87,8 +87,3 @@ output "ticket_confirm_queue_url" {
   description = "URL of the ticket confirmation SQS queue."
   value       = module.sqs_ticket_confirm.queue_url
 }
-
-output "ecr_repository_urls" {
-  description = "Map of backend service names to ECR repository URLs."
-  value       = module.ecr.repository_urls
-}
