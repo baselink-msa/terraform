@@ -126,6 +126,20 @@ resource "helm_release" "aws_load_balancer_controller" {
     value = aws_iam_role.aws_load_balancer_controller.arn
   }
 
+  # system 노드그룹의 CriticalAddonsOnly taint를 허용해 컨트롤러를 배치한다.
+  set {
+    name  = "tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
   depends_on = [aws_iam_role_policy_attachment.aws_load_balancer_controller]
 }
 
