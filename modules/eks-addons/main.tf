@@ -444,6 +444,20 @@ resource "helm_release" "karpenter" {
     value = "1Gi"
   }
 
+  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
+  set {
+    name  = "controller.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "controller.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "controller.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
   depends_on = [
     aws_iam_role_policy.karpenter_controller,
     aws_iam_role_policy_attachment.karpenter_node,
@@ -467,6 +481,20 @@ resource "helm_release" "keda" {
 
   atomic  = true
   timeout = 600
+
+  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
+  set {
+    name  = "tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "tolerations[0].effect"
+    value = "NoSchedule"
+  }
 }
 
 #==============================================================================
@@ -523,6 +551,11 @@ resource "kubectl_manifest" "nodepool" {
               key      = "karpenter.k8s.aws/instance-category"
               operator = "In"
               values   = var.node_instance_categories
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-generation"
+              operator = "Gt"
+              values   = ["4"]
             },
           ]
           # 오래된 노드는 교체 (30일)

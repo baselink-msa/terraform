@@ -35,8 +35,9 @@ baselink의 좌석 잠금·예매 대기열 등 **빠른 동시성 제어가 필
 | `at_rest_encryption_enabled` | 저장 데이터 암호화 | bool | `true` | |
 | `transit_encryption_enabled` | 전송 중 암호화(TLS) | bool | `true` | |
 | `auth_token` | Redis AUTH 토큰 (선택, sensitive) | string | `null` | |
-| `snapshot_retention_limit` | 자동 스냅샷 보관 일수 (0=비활성) | number | `0` | |
+| `snapshot_retention_limit` | 자동 스냅샷 보관 일수 (0=비활성) | number | `1` | |
 | `apply_immediately` | 변경을 즉시 적용 | bool | `false` | |
+| `auth_token_secret_arn` | Secrets Manager의 auth_token ARN. 지정 시 var.auth_token 무시 | string | `null` | |
 | `tags` | 공통 태그 | map(string) | `{}` | |
 
 ## 출력값

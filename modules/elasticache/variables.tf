@@ -153,3 +153,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+#--- Secrets Manager 연동 ----------------------------------------------------
+variable "auth_token_secret_arn" {
+  description = "Secrets Manager 의 auth_token ARN. 지정 시 var.auth_token 무시. tfvars 에 토큰 평문 안 박아도 됨."
+  type        = string
+  default     = null
+}

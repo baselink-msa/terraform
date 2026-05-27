@@ -10,7 +10,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.0, < 6.0"
     }
   }
 }
@@ -78,6 +78,23 @@ resource "aws_elasticache_parameter_group" "this" {
   tags = var.tags
 }
 
+###############################################################################
+# auth_token — Secrets Manager 사용 시 ARN 으로 fetch, 아니면 var.auth_token 직접 사용
+###############################################################################
+
+data "aws_secretsmanager_secret_version" "auth" {
+  count     = var.auth_token_secret_arn != null ? 1 : 0
+  secret_id = var.auth_token_secret_arn
+}
+
+locals {
+  effective_auth_token = (
+    var.auth_token_secret_arn != null
+    ? data.aws_secretsmanager_secret_version.auth[0].secret_string
+    : var.auth_token
+  )
+}
+
 #------------------------------------------------------------------------------
 # 4) Replication group — Redis 본체 (primary + replica)
 #    cluster mode disabled → num_cache_clusters = 전체 노드 수
@@ -106,7 +123,7 @@ resource "aws_elasticache_replication_group" "this" {
   # 암호화 (auth_token 사용 시 transit_encryption_enabled = true 필수)
   at_rest_encryption_enabled = var.at_rest_encryption_enabled
   transit_encryption_enabled = var.transit_encryption_enabled
-  auth_token                 = var.auth_token
+  auth_token                 = local.effective_auth_token
 
   # 스냅샷 보관일 (기본 1일 — 최소한의 복구 지점 확보)
   snapshot_retention_limit = var.snapshot_retention_limit

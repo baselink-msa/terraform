@@ -26,3 +26,17 @@ module "eks_addons" {
 
   tags = local.common_tags
 }
+
+module "argocd" {
+  source = "../../../modules/argocd"
+
+  cluster_name      = data.terraform_remote_state.infra.outputs.eks_cluster_name
+  oidc_provider_arn = data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn
+  oidc_provider_url = data.terraform_remote_state.infra.outputs.eks_oidc_provider_url
+
+  namespace           = "argocd"
+  server_service_type = "ClusterIP"
+  server_insecure     = true
+
+  tags = local.common_tags
+}
