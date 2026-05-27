@@ -15,3 +15,6 @@ override.tf.json
 *.tfvars.json
 
 # .terraform.lock.hcl 은 '커밋합니다' (provider 버전 잠금 — 재현성 보장)
+
+# Kiro
+.kiro/
