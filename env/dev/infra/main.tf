@@ -155,6 +155,8 @@ resource "aws_iam_role_policy" "eks_node_backend_runtime" {
         Effect = "Allow"
         Action = [
           "bedrock:InvokeModel",
+          "bedrock:ApplyGuardrail",
+          "bedrock-agent-runtime:InvokeAgent",
           "bedrock-agent-runtime:Retrieve",
           "bedrock-agent-runtime:RetrieveAndGenerate"
         ]
@@ -223,6 +225,8 @@ resource "aws_iam_role_policy" "backend_runtime_irsa" {
         Effect = "Allow"
         Action = [
           "bedrock:InvokeModel",
+          "bedrock:ApplyGuardrail",
+          "bedrock-agent-runtime:InvokeAgent",
           "bedrock-agent-runtime:Retrieve",
           "bedrock-agent-runtime:RetrieveAndGenerate"
         ]
