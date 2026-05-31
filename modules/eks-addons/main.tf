@@ -366,28 +366,34 @@ resource "kubectl_manifest" "ec2nodeclass" {
 }
 
 #==============================================================================
-# 7) NodePool — Karpenter의 '노드 생성 규칙' (채용 기준표)
-#    어떤 노드를 골라도 되는지 / 총량 상한 / 언제 줄이고 교체할지
+# 7) NodePools — 서비스 등급별 컴퓨트 분리 (critical / general / batch)
+#    workload-class 노드 라벨 → Pod nodeSelector 로 라우팅
 #==============================================================================
-resource "kubectl_manifest" "nodepool" {
+
+# critical: 결제·락·구매 funnel (ticket·seat-lock·waiting-room·auth)
+#   OnDemand only — Spot 중단 허용 불가
+#   consolidateAfter 5m (보수적), 티켓 오픈 surge 시간대 disruption 차단
+resource "kubectl_manifest" "nodepool_critical" {
   yaml_body = yamlencode({
     apiVersion = "karpenter.sh/v1"
     kind       = "NodePool"
-    metadata   = { name = "default" }
+    metadata   = { name = "critical" }
     spec = {
       template = {
+        metadata = {
+          labels = { "workload-class" = "critical" }
+        }
         spec = {
           nodeClassRef = {
             group = "karpenter.k8s.aws"
             kind  = "EC2NodeClass"
             name  = "default"
           }
-          # 고를 수 있는 노드 후보 범위
           requirements = [
             {
               key      = "karpenter.sh/capacity-type"
               operator = "In"
-              values   = var.node_capacity_types
+              values   = ["on-demand"]
             },
             {
               key      = "kubernetes.io/arch"
@@ -397,22 +403,140 @@ resource "kubectl_manifest" "nodepool" {
             {
               key      = "karpenter.k8s.aws/instance-category"
               operator = "In"
-              values   = var.node_instance_categories
+              values   = ["c", "m"]
             },
           ]
-          # 오래된 노드는 교체 (30일)
           expireAfter = "720h"
         }
       }
-      # 총량 상한 — 비용 폭주 방지
       limits = {
-        cpu    = var.nodepool_cpu_limit
-        memory = var.nodepool_memory_limit
+        cpu    = "500"
+        memory = "500Gi"
       }
-      # 언제 줄일지 — 한가한 노드 합치고 비우기
+      disruption = {
+        consolidationPolicy = "WhenEmptyOrUnderutilized"
+        consolidateAfter    = "5m"
+        budgets = [
+          { nodes = "10%" },
+          { nodes = "0", schedule = "50 4 * * *", duration = "2h" }
+        ]
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.ec2nodeclass]
+}
+
+# general: 덜 critical (game·order·admin·ai-chatbot)
+#   Spot+OnDemand 허용, instance-category r 추가 (메모리 집약 workload 대응)
+resource "kubectl_manifest" "nodepool_general" {
+  yaml_body = yamlencode({
+    apiVersion = "karpenter.sh/v1"
+    kind       = "NodePool"
+    metadata   = { name = "general" }
+    spec = {
+      template = {
+        metadata = {
+          labels = { "workload-class" = "general" }
+        }
+        spec = {
+          nodeClassRef = {
+            group = "karpenter.k8s.aws"
+            kind  = "EC2NodeClass"
+            name  = "default"
+          }
+          requirements = [
+            {
+              key      = "karpenter.sh/capacity-type"
+              operator = "In"
+              values   = ["spot", "on-demand"]
+            },
+            {
+              key      = "kubernetes.io/arch"
+              operator = "In"
+              values   = var.node_arch
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-category"
+              operator = "In"
+              values   = ["c", "m", "r"]
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-generation"
+              operator = "Gt"
+              values   = ["4"]
+            },
+          ]
+          expireAfter = "720h"
+        }
+      }
+      limits = {
+        cpu    = "300"
+        memory = "300Gi"
+      }
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         consolidateAfter    = "1m"
+      }
+    }
+  })
+
+  depends_on = [kubectl_manifest.ec2nodeclass]
+}
+
+# batch: ticket-worker (SQS 비동기 처리)
+#   Spot only — 중단 시 SQS 재처리 가능, 적극 축소(30%)
+resource "kubectl_manifest" "nodepool_batch" {
+  yaml_body = yamlencode({
+    apiVersion = "karpenter.sh/v1"
+    kind       = "NodePool"
+    metadata   = { name = "batch" }
+    spec = {
+      template = {
+        metadata = {
+          labels = { "workload-class" = "batch" }
+        }
+        spec = {
+          nodeClassRef = {
+            group = "karpenter.k8s.aws"
+            kind  = "EC2NodeClass"
+            name  = "default"
+          }
+          requirements = [
+            {
+              key      = "karpenter.sh/capacity-type"
+              operator = "In"
+              values   = ["spot"]
+            },
+            {
+              key      = "kubernetes.io/arch"
+              operator = "In"
+              values   = var.node_arch
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-category"
+              operator = "In"
+              values   = ["c", "m"]
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-generation"
+              operator = "Gt"
+              values   = ["4"]
+            },
+          ]
+          expireAfter = "720h"
+        }
+      }
+      limits = {
+        cpu    = "300"
+        memory = "300Gi"
+      }
+      disruption = {
+        consolidationPolicy = "WhenEmptyOrUnderutilized"
+        consolidateAfter    = "1m"
+        budgets = [
+          { nodes = "30%" }
+        ]
       }
     }
   })

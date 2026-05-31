@@ -68,34 +68,10 @@ variable "ami_alias" {
   default     = "al2023@latest"
 }
 
-variable "node_capacity_types" {
-  description = "Karpenter가 띄울 노드의 구매 옵션 (spot / on-demand)"
-  type        = list(string)
-  default     = ["spot", "on-demand"]
-}
-
 variable "node_arch" {
   description = "노드 CPU 아키텍처 (amd64 / arm64)"
   type        = list(string)
   default     = ["amd64"]
-}
-
-variable "node_instance_categories" {
-  description = "허용할 인스턴스 카테고리 (c=컴퓨트, m=범용, r=메모리 등)"
-  type        = list(string)
-  default     = ["c", "m", "r"]
-}
-
-variable "nodepool_cpu_limit" {
-  description = "NodePool 전체 CPU 총량 상한 (코어 수). 비용 폭주 방지"
-  type        = string
-  default     = "1000"
-}
-
-variable "nodepool_memory_limit" {
-  description = "NodePool 전체 메모리 총량 상한 (예: \"1000Gi\"). 비용 폭주 방지"
-  type        = string
-  default     = "1000Gi"
 }
 
 #--- 공통 --------------------------------------------------------------------
