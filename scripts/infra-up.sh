@@ -113,9 +113,14 @@ log "    git-ops 완료 ($(elapsed $STEP_START))"
 # 5.5. auth-service Ready 대기 (Flyway DB 마이그레이션 자동 실행)
 ###############################################################################
 log "    auth-service 대기 중 (DB 마이그레이션 자동 실행)..."
-kubectl rollout status deploy/auth-service -n baselink-dev --timeout=180s 2>/dev/null \
-  && log "    auth-service Ready — DB 마이그레이션 완료" \
-  || warn "auth-service 시작 지연. 로그를 확인하세요: kubectl logs deploy/auth-service -n baselink-dev"
+set +e
+kubectl rollout status deploy/auth-service -n baselink-dev --timeout=180s 2>/dev/null
+if [ $? -eq 0 ]; then
+  log "    auth-service Ready — DB 마이그레이션 완료"
+else
+  warn "auth-service 시작 지연. 로그 확인: kubectl logs deploy/auth-service -n baselink-dev"
+fi
+set -e
 
 ###############################################################################
 # 7. CloudFront ALB origin 업데이트
