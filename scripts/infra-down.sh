@@ -59,20 +59,6 @@ fi
 log "    Karpenter 노드 정리 완료"
 
 ###############################################################################
-# 1.6. EKS 잔여 보안그룹 정리 (VPC 삭제 차단 방지)
-###############################################################################
-log "    EKS 잔여 보안그룹 정리 중..."
-VPC_ID=$(cd "$ENV_DIR/infra" && terraform output -raw vpc_id 2>/dev/null || echo "")
-if [ -n "$VPC_ID" ]; then
-  EKS_SGS=$(aws ec2 describe-security-groups \
-    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=eks-cluster-sg-*" \
-    --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
-  for sg in $EKS_SGS; do
-    aws ec2 delete-security-group --group-id "$sg" 2>/dev/null && log "    SG 삭제: $sg"
-  done
-fi
-
-###############################################################################
 # 2. Terraform — addon destroy
 ###############################################################################
 log "2/3 Terraform addon destroy 시작..."
@@ -81,6 +67,28 @@ cd "$ENV_DIR/addon"
 terraform init -input=false -no-color > /dev/null 2>&1
 terraform destroy -auto-approve -input=false
 log "    addon destroy 완료 ($(elapsed $STEP_START))"
+
+###############################################################################
+# 2.5. EKS 잔여 보안그룹 + ENI 정리 (VPC 삭제 차단 방지)
+###############################################################################
+log "    EKS 잔여 리소스 정리 중..."
+VPC_ID=$(cd "$ENV_DIR/infra" && terraform output -raw vpc_id 2>/dev/null || echo "")
+if [ -n "$VPC_ID" ]; then
+  # 보안그룹 정리
+  EKS_SGS=$(aws ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=eks-cluster-sg-*" \
+    --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
+  for sg in $EKS_SGS; do
+    aws ec2 delete-security-group --group-id "$sg" 2>/dev/null && log "    SG 삭제: $sg"
+  done
+
+  # 잔여 ENI 정리
+  for eni in $(aws ec2 describe-network-interfaces \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+    --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+    aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null && log "    ENI 삭제: $eni"
+  done
+fi
 
 ###############################################################################
 # 3. Terraform — infra destroy
@@ -93,8 +101,10 @@ terraform init -input=false -no-color > /dev/null 2>&1
 # EKS 삭제 후 ENI 정리에 시간이 걸려서 서브넷 삭제가 실패할 수 있음
 # 최대 3번 retry (사이에 60초 대기)
 MAX_RETRIES=3
+set +e  # retry 로직을 위해 일시적으로 에러 시 종료 비활성화
 for i in $(seq 1 $MAX_RETRIES); do
-  if terraform destroy -auto-approve -input=false 2>&1; then
+  terraform destroy -auto-approve -input=false 2>&1
+  if [ $? -eq 0 ]; then
     break
   else
     if [ $i -lt $MAX_RETRIES ]; then
@@ -107,10 +117,12 @@ for i in $(seq 1 $MAX_RETRIES); do
       done
       sleep 60
     else
+      set -e
       err "infra destroy 실패 ($MAX_RETRIES회 시도). 수동 확인 필요."
     fi
   fi
 done
+set -e
 log "    infra destroy 완료 ($(elapsed $STEP_START))"
 
 ###############################################################################
