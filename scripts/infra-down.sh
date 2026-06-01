@@ -39,6 +39,40 @@ kubectl delete -k overlays/dev --ignore-not-found=true 2>/dev/null || warn "kube
 log "    git-ops 삭제 완료 ($(elapsed $STEP_START))"
 
 ###############################################################################
+# 1.5. Karpenter 노드 정리 (ENI 잔류 방지)
+###############################################################################
+log "    Karpenter 노드 정리 중..."
+# NodePool/NodeClaim 삭제 → Karpenter가 노드를 graceful drain & terminate
+kubectl delete nodeclaim --all -A 2>/dev/null || true
+kubectl delete nodepool --all -A 2>/dev/null || true
+
+# Karpenter가 정리할 시간을 주고, 남은 인스턴스 강제 종료
+sleep 15
+KARPENTER_INSTANCES=$(aws ec2 describe-instances \
+  --filters "Name=tag:karpenter.sh/managed-by,Values=*" "Name=instance-state-name,Values=running,pending,stopping" \
+  --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null)
+if [ -n "$KARPENTER_INSTANCES" ]; then
+  log "    Karpenter 인스턴스 강제 종료: $KARPENTER_INSTANCES"
+  aws ec2 terminate-instances --instance-ids $KARPENTER_INSTANCES >/dev/null 2>&1
+  aws ec2 wait instance-terminated --instance-ids $KARPENTER_INSTANCES 2>/dev/null || sleep 30
+fi
+log "    Karpenter 노드 정리 완료"
+
+###############################################################################
+# 1.6. EKS 잔여 보안그룹 정리 (VPC 삭제 차단 방지)
+###############################################################################
+log "    EKS 잔여 보안그룹 정리 중..."
+VPC_ID=$(cd "$ENV_DIR/infra" && terraform output -raw vpc_id 2>/dev/null || echo "")
+if [ -n "$VPC_ID" ]; then
+  EKS_SGS=$(aws ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=eks-cluster-sg-*" \
+    --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
+  for sg in $EKS_SGS; do
+    aws ec2 delete-security-group --group-id "$sg" 2>/dev/null && log "    SG 삭제: $sg"
+  done
+fi
+
+###############################################################################
 # 2. Terraform — addon destroy
 ###############################################################################
 log "2/3 Terraform addon destroy 시작..."
