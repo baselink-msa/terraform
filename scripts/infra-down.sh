@@ -155,6 +155,12 @@ set -e
 log "    infra destroy 완료 ($(elapsed $STEP_START))"
 
 ###############################################################################
+# 3.5. CloudWatch Log Group 정리 (다음 apply 시 충돌 방지)
+###############################################################################
+log "    CloudWatch Log Group 정리 중..."
+aws logs delete-log-group --log-group-name /aws/eks/baselink-dev/cluster 2>/dev/null && log "    EKS Log Group 삭제 완료" || true
+
+###############################################################################
 echo ""
 log "========================================="
 log " 전체 내리기 완료! 총 소요시간: $(elapsed $TOTAL_START)"
