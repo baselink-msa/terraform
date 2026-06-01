@@ -97,39 +97,15 @@ variable "enable_interruption_queue" {
 
 #--- NodePool / EC2NodeClass -------------------------------------------------
 variable "ami_alias" {
-  description = "EC2NodeClass의 AMI alias (예: al2023@latest)"
+  description = "EC2NodeClass AMI alias. al2023@latest 는 apply 마다 노드 교체 위험 — 버전 고정 권장. 업그레이드 시 명시적으로 변경"
   type        = string
-  default     = "al2023@latest"
-}
-
-variable "node_capacity_types" {
-  description = "Karpenter가 띄울 노드의 구매 옵션 (spot / on-demand)"
-  type        = list(string)
-  default     = ["spot", "on-demand"]
+  default     = "al2023@v20251101"
 }
 
 variable "node_arch" {
   description = "노드 CPU 아키텍처 (amd64 / arm64)"
   type        = list(string)
   default     = ["amd64", "arm64"]
-}
-
-variable "node_instance_categories" {
-  description = "허용할 인스턴스 카테고리 (c=컴퓨트, m=범용, r=메모리 등)"
-  type        = list(string)
-  default     = ["c", "m", "r"]
-}
-
-variable "nodepool_cpu_limit" {
-  description = "NodePool 전체 CPU 총량 상한 (코어 수). 비용 폭주 방지"
-  type        = string
-  default     = "1000"
-}
-
-variable "nodepool_memory_limit" {
-  description = "NodePool 전체 메모리 총량 상한 (예: \"1000Gi\"). 비용 폭주 방지"
-  type        = string
-  default     = "1000Gi"
 }
 
 #--- 공통 --------------------------------------------------------------------
