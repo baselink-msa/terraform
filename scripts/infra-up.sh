@@ -98,34 +98,51 @@ else
 fi
 
 ###############################################################################
-# 5. DB 마이그레이션 (Flyway Job)
+# 5. DB 마이그레이션 (seed-dev.sql 직접 실행)
 ###############################################################################
-log "4.5/5 DB 마이그레이션 실행 중..."
+log "4.5/5 DB 시드 실행 중..."
 STEP_START=$(date +%s)
 cd "$GITOPS_ROOT"
 
-# ConfigMap(backend-config)을 먼저 apply (Flyway Job이 참조함)
-kubectl apply -k overlays/dev --selector='app notin (admin-service,auth-service,game-service,order-service,ai-chatbot-service,seat-lock-service,ticket-service,ticket-worker-service,waiting-room-service)' 2>/dev/null || kubectl apply -f base/namespace.yaml -f base/configmap.yaml 2>/dev/null || true
+# ConfigMap(backend-config)을 먼저 apply (서비스가 참조함)
+kubectl apply -f base/namespace.yaml -f base/configmap.yaml 2>/dev/null || true
 
-# 기존 Job/ConfigMap 정리
-kubectl delete job db-migration -n baselink-dev --ignore-not-found=true 2>/dev/null
-kubectl delete configmap flyway-sql -n baselink-dev --ignore-not-found=true 2>/dev/null
+# 기존 리소스 정리
+kubectl delete configmap seed-sql -n baselink-dev --ignore-not-found=true 2>/dev/null
+kubectl delete pod psql-seed-run -n baselink-dev --ignore-not-found=true 2>/dev/null
 
-# Flyway SQL ConfigMap 생성
-kubectl create configmap flyway-sql \
-  --from-file="$GITOPS_ROOT/db/flyway/sql" \
+# seed SQL을 ConfigMap으로 생성
+kubectl create configmap seed-sql \
+  --from-file=seed-dev.sql="$GITOPS_ROOT/db/seed-dev.sql" \
   -n baselink-dev
 
-# Flyway Job 실행
-kubectl apply -f "$GITOPS_ROOT/db/flyway/job.example.yaml"
-
-# Job 완료 대기
-if kubectl wait --for=condition=complete job/db-migration -n baselink-dev --timeout=240s 2>/dev/null; then
-  log "    DB 마이그레이션 완료 ($(elapsed $STEP_START))"
-  kubectl logs job/db-migration -n baselink-dev 2>/dev/null | tail -5
+# psql Pod로 seed 실행 (amd64 노드에서, backend-secret의 비밀번호 사용)
+RDS_HOST=$(cd "$ENV_DIR/infra" && terraform output -raw rds_endpoint 2>/dev/null | cut -d: -f1 || echo "")
+if [ -z "$RDS_HOST" ]; then
+  warn "RDS 호스트를 못 읽었어요. DB 시드를 수동으로 실행하세요."
 else
-  warn "DB 마이그레이션 실패. 로그 확인:"
-  kubectl logs job/db-migration -n baselink-dev 2>/dev/null | tail -20
+  kubectl run psql-seed-run --rm -i --restart=Never -n baselink-dev \
+    --overrides="{
+      \"spec\": {
+        \"nodeSelector\": {\"kubernetes.io/arch\": \"amd64\"},
+        \"containers\": [{
+          \"name\": \"psql\",
+          \"image\": \"postgres:16-alpine\",
+          \"command\": [\"sh\", \"-c\", \"psql -h $RDS_HOST -U baseball -d baseball_platform -f /sql/seed-dev.sql\"],
+          \"env\": [
+            {\"name\": \"PGPASSWORD\", \"valueFrom\": {\"secretKeyRef\": {\"name\": \"backend-secret\", \"key\": \"SPRING_DATASOURCE_PASSWORD\"}}}
+          ],
+          \"volumeMounts\": [{\"name\": \"sql\", \"mountPath\": \"/sql\"}]
+        }],
+        \"volumes\": [{\"name\": \"sql\", \"configMap\": {\"name\": \"seed-sql\"}}]
+      }
+    }" --image=postgres:16-alpine 2>&1 | tail -5
+
+  if [ $? -eq 0 ]; then
+    log "    DB 시드 완료 ($(elapsed $STEP_START))"
+  else
+    warn "DB 시드 실행 중 일부 오류 발생. 로그를 확인하세요."
+  fi
 fi
 
 ###############################################################################
