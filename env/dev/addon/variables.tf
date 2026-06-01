@@ -1,5 +1,29 @@
 ###############################################################################
 # environments/dev/addon/variables.tf
 #
-# TODO: 이 레이어 root에서 받을 변수를 정의하세요. (필요 시)
 ###############################################################################
+
+variable "aws_region" {
+  description = "AWS region where the dev EKS cluster exists."
+  type        = string
+  default     = "ap-northeast-2"
+}
+
+variable "aws_profile" {
+  description = "AWS CLI profile name to use for authentication. Optional if using environment variables or instance roles."
+  type        = string
+  default     = "sds"
+}
+
+variable "project_name" {
+  description = "Project name used for resource tagging."
+  type        = string
+  default     = "baselink"
+}
+
+variable "environment" {
+  description = "Environment name used for resource tagging."
+  type        = string
+  default     = "dev"
+}
+

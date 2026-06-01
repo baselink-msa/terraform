@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/helm"
       version = ">= 2.12, < 3.0"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = ">= 3.4"
+    }
     kubectl = {
       source  = "gavinbunney/kubectl"
       version = ">= 1.14"
@@ -34,6 +38,109 @@ locals {
 
   # Karpenter 컨트롤러 ServiceAccount 이름 (차트 기본값)
   karpenter_sa = "karpenter"
+
+  # AWS Load Balancer Controller ServiceAccount 이름 (차트 기본값)
+  aws_load_balancer_controller_sa = "aws-load-balancer-controller"
+}
+
+#==============================================================================
+# 0) AWS Load Balancer Controller 설치
+#    GitOps 레포의 Ingress가 ALB를 만들 수 있도록 컨트롤러와 IRSA를 준비한다.
+#==============================================================================
+data "http" "aws_load_balancer_controller_policy" {
+  url = var.aws_load_balancer_controller_policy_url
+
+  request_headers = {
+    Accept = "application/json"
+  }
+}
+
+data "aws_iam_policy_document" "aws_load_balancer_controller_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url}:sub"
+      values   = ["system:serviceaccount:${var.aws_load_balancer_controller_namespace}:${local.aws_load_balancer_controller_sa}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "aws_load_balancer_controller" {
+  name               = "${var.cluster_name}-aws-load-balancer-controller"
+  assume_role_policy = data.aws_iam_policy_document.aws_load_balancer_controller_assume.json
+  tags               = var.tags
+}
+
+resource "aws_iam_policy" "aws_load_balancer_controller" {
+  name        = "${var.cluster_name}-AWSLoadBalancerControllerIAMPolicy"
+  description = "IAM policy for AWS Load Balancer Controller on ${var.cluster_name}"
+  policy      = data.http.aws_load_balancer_controller_policy.response_body
+  tags        = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
+  role       = aws_iam_role.aws_load_balancer_controller.name
+  policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
+}
+
+resource "helm_release" "aws_load_balancer_controller" {
+  name             = local.aws_load_balancer_controller_sa
+  namespace        = var.aws_load_balancer_controller_namespace
+  create_namespace = false
+
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = var.aws_load_balancer_controller_version
+
+  set {
+    name  = "clusterName"
+    value = var.cluster_name
+  }
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+  set {
+    name  = "vpcId"
+    value = var.vpc_id
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = local.aws_load_balancer_controller_sa
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.aws_load_balancer_controller.arn
+  }
+
+  # system 노드그룹의 CriticalAddonsOnly taint를 허용해 컨트롤러를 배치한다.
+  set {
+    name  = "tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.aws_load_balancer_controller]
 }
 
 #==============================================================================
@@ -84,7 +191,65 @@ data "aws_iam_policy_document" "karpenter_controller" {
       "ec2:DeleteLaunchTemplate",
     ]
     resources = ["*"]
-    # prod에서는 ec2:ResourceTag 조건으로 범위를 좁히는 것을 권장
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/karpenter.sh/managed-by"
+      values   = [var.cluster_name]
+    }
+  }
+
+  # Karpenter v1은 EC2NodeClass 검증 단계에서 EC2 생성 권한을 사전 확인한다.
+  # 이 호출에는 생성 태그 조건이 맞지 않을 수 있어 별도로 허용한다.
+  statement {
+    sid    = "KarpenterProvisioningAuthCheck"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateFleet",
+      "ec2:CreateLaunchTemplate",
+      "ec2:DeleteLaunchTemplate",
+      "ec2:RunInstances",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "KarpenterLaunchTemplateTagging"
+    effect  = "Allow"
+    actions = ["ec2:CreateTags"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values = [
+        "CreateFleet",
+        "CreateLaunchTemplate",
+        "RunInstances",
+      ]
+    }
+  }
+
+  # Karpenter가 자신이 만든 리소스를 삭제/종료할 수 있도록 허용
+  statement {
+    sid    = "KarpenterEC2WriteTagged"
+    effect = "Allow"
+    actions = [
+      "ec2:TerminateInstances",
+      "ec2:DeleteLaunchTemplate",
+    ]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/karpenter.sh/managed-by"
+      values   = [var.cluster_name]
+    }
   }
 
   # 인스턴스 타입·AMI·서브넷 등 조회
@@ -113,9 +278,12 @@ data "aws_iam_policy_document" "karpenter_controller" {
 
   # 노드 instance profile 확인
   statement {
-    sid       = "KarpenterInstanceProfileRead"
-    effect    = "Allow"
-    actions   = ["iam:GetInstanceProfile"]
+    sid    = "KarpenterInstanceProfileRead"
+    effect = "Allow"
+    actions = [
+      "iam:GetInstanceProfile",
+      "iam:ListInstanceProfiles",
+    ]
     resources = ["*"]
   }
 
@@ -286,6 +454,9 @@ resource "helm_release" "karpenter" {
   chart      = "karpenter"
   version    = var.karpenter_version
 
+  atomic  = true
+  timeout = 600
+
   # 컨트롤러 ServiceAccount에 IRSA 역할 연결
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
@@ -305,6 +476,12 @@ resource "helm_release" "karpenter" {
     }
   }
 
+  # Controller HA — 2 replicas
+  set {
+    name  = "replicas"
+    value = var.karpenter_replicas
+  }
+
   set {
     name  = "controller.resources.requests.cpu"
     value = "1"
@@ -320,6 +497,20 @@ resource "helm_release" "karpenter" {
   set {
     name  = "controller.resources.limits.memory"
     value = "1Gi"
+  }
+
+  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
+  set {
+    name  = "controller.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "controller.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "controller.tolerations[0].effect"
+    value = "NoSchedule"
   }
 
   depends_on = [
@@ -342,6 +533,23 @@ resource "helm_release" "keda" {
   repository = "https://kedacore.github.io/charts"
   chart      = "keda"
   version    = var.keda_version
+
+  atomic  = true
+  timeout = 600
+
+  # 시스템 노드 taint(CriticalAddonsOnly) 를 허용해 system 노드그룹에 배치
+  set {
+    name  = "tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "tolerations[0].effect"
+    value = "NoSchedule"
+  }
 }
 
 #==============================================================================
@@ -404,6 +612,11 @@ resource "kubectl_manifest" "nodepool_critical" {
               key      = "karpenter.k8s.aws/instance-category"
               operator = "In"
               values   = ["c", "m"]
+            },
+            {
+              key      = "karpenter.k8s.aws/instance-generation"
+              operator = "Gt"
+              values   = ["4"]
             },
           ]
           expireAfter = "720h"
@@ -477,6 +690,9 @@ resource "kubectl_manifest" "nodepool_general" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         consolidateAfter    = "1m"
+        budgets = [
+          { nodes = "10%" }
+        ]
       }
     }
   })
