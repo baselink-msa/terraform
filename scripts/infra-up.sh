@@ -138,6 +138,45 @@ kubectl apply -k overlays/dev
 log "    git-ops 완료 ($(elapsed $STEP_START))"
 
 ###############################################################################
+# 7. CloudFront ALB origin 업데이트
+###############################################################################
+log "    CloudFront origin 업데이트 중..."
+CF_DIST_ID="E1L0BJIJOTT0R6"
+
+# Ingress가 ALB를 프로비저닝할 때까지 대기 (최대 3분)
+ALB_HOST=""
+for i in $(seq 1 18); do
+  ALB_HOST=$(kubectl get ingress baselink-api -n baselink-dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+  if [ -n "$ALB_HOST" ]; then break; fi
+  sleep 10
+done
+
+if [ -n "$ALB_HOST" ]; then
+  # 현재 CloudFront 설정 가져오기
+  CF_CONFIG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json)
+  ETAG=$(echo "$CF_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['ETag'])")
+  
+  # ALB origin 도메인 업데이트
+  UPDATED_CONFIG=$(echo "$CF_CONFIG" | python3 -c "
+import sys, json
+config = json.load(sys.stdin)
+dist_config = config['DistributionConfig']
+for origin in dist_config['Origins']['Items']:
+    if 'elb.amazonaws.com' in origin.get('DomainName', '') or origin.get('Id','') == 'api':
+        origin['DomainName'] = '$ALB_HOST'
+        break
+json.dump(dist_config, sys.stdout)
+")
+  
+  echo "$UPDATED_CONFIG" > /tmp/cf-update.json
+  aws cloudfront update-distribution --id "$CF_DIST_ID" --if-match "$ETAG" --distribution-config file:///tmp/cf-update.json > /dev/null 2>&1
+  rm -f /tmp/cf-update.json
+  log "    CloudFront origin 업데이트 완료: $ALB_HOST"
+else
+  warn "ALB 주소를 가져올 수 없습니다. CloudFront origin을 수동으로 업데이트하세요."
+fi
+
+###############################################################################
 echo ""
 log "========================================="
 log " 전체 완료! 총 소요시간: $(elapsed $TOTAL_START)"
