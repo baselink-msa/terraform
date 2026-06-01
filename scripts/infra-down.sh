@@ -59,6 +59,20 @@ fi
 log "    Karpenter 노드 정리 완료"
 
 ###############################################################################
+# 1.6. EKS 잔여 보안그룹 정리 (VPC 삭제 차단 방지)
+###############################################################################
+log "    EKS 잔여 보안그룹 정리 중..."
+VPC_ID=$(cd "$ENV_DIR/infra" && terraform output -raw vpc_id 2>/dev/null || echo "")
+if [ -n "$VPC_ID" ]; then
+  EKS_SGS=$(aws ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=eks-cluster-sg-*" \
+    --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
+  for sg in $EKS_SGS; do
+    aws ec2 delete-security-group --group-id "$sg" 2>/dev/null && log "    SG 삭제: $sg"
+  done
+fi
+
+###############################################################################
 # 2. Terraform — addon destroy
 ###############################################################################
 log "2/3 Terraform addon destroy 시작..."
