@@ -550,6 +550,9 @@ resource "helm_release" "keda" {
     name  = "tolerations[0].effect"
     value = "NoSchedule"
   }
+
+  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  depends_on = [helm_release.aws_load_balancer_controller]
 }
 
 #==============================================================================
