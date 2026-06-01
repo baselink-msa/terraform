@@ -40,3 +40,41 @@ module "argocd" {
 
   tags = local.common_tags
 }
+
+#==============================================================================
+# backend-secret — RDS 비밀번호 + JWT Secret을 K8s Secret으로 생성
+# Secrets Manager에서 RDS 비밀번호를 읽어서 자동 생성
+#==============================================================================
+data "aws_secretsmanager_secrets" "rds" {
+  filter {
+    name   = "name"
+    values = ["rds!"]
+  }
+}
+
+data "aws_secretsmanager_secret_version" "rds" {
+  secret_id = tolist(data.aws_secretsmanager_secrets.rds.arns)[0]
+}
+
+locals {
+  rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
+}
+
+resource "kubectl_manifest" "backend_secret" {
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    metadata = {
+      name      = "backend-secret"
+      namespace = "baselink-dev"
+    }
+    type = "Opaque"
+    stringData = {
+      SPRING_DATASOURCE_USERNAME = local.rds_creds["username"]
+      SPRING_DATASOURCE_PASSWORD = local.rds_creds["password"]
+      APP_JWT_SECRET             = "baselink-dev-jwt-secret-key-2026-minimum-32-bytes-long"
+    }
+  })
+
+  depends_on = [module.eks_addons]
+}

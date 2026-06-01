@@ -55,7 +55,28 @@ log "3/3 Terraform infra destroy 시작..."
 STEP_START=$(date +%s)
 cd "$ENV_DIR/infra"
 terraform init -input=false -no-color > /dev/null 2>&1
-terraform destroy -auto-approve -input=false
+
+# EKS 삭제 후 ENI 정리에 시간이 걸려서 서브넷 삭제가 실패할 수 있음
+# 최대 3번 retry (사이에 60초 대기)
+MAX_RETRIES=3
+for i in $(seq 1 $MAX_RETRIES); do
+  if terraform destroy -auto-approve -input=false 2>&1; then
+    break
+  else
+    if [ $i -lt $MAX_RETRIES ]; then
+      warn "destroy 실패 (시도 $i/$MAX_RETRIES). ENI 정리 대기 중... (60초)"
+      # 잔여 ENI 정리 시도
+      for subnet in $(aws ec2 describe-subnets --filters "Name=tag:Project,Values=baselink" --query 'Subnets[*].SubnetId' --output text 2>/dev/null); do
+        for eni in $(aws ec2 describe-network-interfaces --filters "Name=subnet-id,Values=$subnet" "Name=status,Values=available" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+          aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null && log "    ENI 삭제: $eni"
+        done
+      done
+      sleep 60
+    else
+      err "infra destroy 실패 ($MAX_RETRIES회 시도). 수동 확인 필요."
+    fi
+  fi
+done
 log "    infra destroy 완료 ($(elapsed $STEP_START))"
 
 ###############################################################################
