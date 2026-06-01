@@ -47,7 +47,7 @@ module "argocd" {
 #==============================================================================
 data "aws_secretsmanager_secrets" "rds" {
   filter {
-    key    = "name"
+    name   = "name"
     values = ["rds!"]
   }
 }
