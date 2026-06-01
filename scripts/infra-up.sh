@@ -73,6 +73,31 @@ else
 fi
 
 ###############################################################################
+# 4.5. backend-secret 생성 (없으면)
+###############################################################################
+log "    backend-secret 확인 중..."
+if ! kubectl get secret backend-secret -n baselink-dev >/dev/null 2>&1; then
+  log "    backend-secret 생성 중..."
+  RDS_SECRET_ARN=$(aws secretsmanager list-secrets --query 'SecretList[?contains(Name,`rds`)].ARN' --output text | head -1)
+  if [ -n "$RDS_SECRET_ARN" ]; then
+    RDS_CREDS=$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET_ARN" --query 'SecretString' --output text)
+    DB_USER=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+    DB_PASS=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+  else
+    DB_USER="baseball"
+    DB_PASS="baseball"
+    warn "Secrets Manager에서 RDS 비밀번호를 못 찾았어요. 기본값 사용."
+  fi
+  kubectl create secret generic backend-secret -n baselink-dev \
+    --from-literal=SPRING_DATASOURCE_USERNAME="$DB_USER" \
+    --from-literal=SPRING_DATASOURCE_PASSWORD="$DB_PASS" \
+    --from-literal=APP_JWT_SECRET="baselink-dev-jwt-secret-key-2026-minimum-32-bytes-long"
+  log "    backend-secret 생성 완료"
+else
+  log "    backend-secret 이미 존재"
+fi
+
+###############################################################################
 # 5. git-ops — kubectl apply
 ###############################################################################
 log "4/4 git-ops apply 시작..."
