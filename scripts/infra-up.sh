@@ -94,7 +94,7 @@ if ! kubectl get secret backend-secret -n baselink-dev >/dev/null 2>&1; then
   kubectl create secret generic backend-secret -n baselink-dev \
     --from-literal=SPRING_DATASOURCE_USERNAME="$DB_USER" \
     --from-literal=SPRING_DATASOURCE_PASSWORD="$DB_PASS" \
-    --from-literal=APP_JWT_SECRET="baselink-dev-jwt-secret-key-2026-minimum-32-bytes-long"
+    --from-literal=APP_JWT_SECRET="$(openssl rand -base64 48)"
   log "    backend-secret 생성 완료"
 else
   log "    backend-secret 이미 존재"

@@ -60,6 +60,11 @@ locals {
   rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
 }
 
+resource "random_password" "jwt_secret" {
+  length  = 64
+  special = false
+}
+
 resource "kubectl_manifest" "backend_namespace" {
   yaml_body = yamlencode({
     apiVersion = "v1"
@@ -82,7 +87,7 @@ resource "kubectl_manifest" "backend_secret" {
     stringData = {
       SPRING_DATASOURCE_USERNAME = local.rds_creds["username"]
       SPRING_DATASOURCE_PASSWORD = local.rds_creds["password"]
-      APP_JWT_SECRET             = "baselink-dev-jwt-secret-key-2026-minimum-32-bytes-long"
+      APP_JWT_SECRET             = random_password.jwt_secret.result
     }
   })
 
