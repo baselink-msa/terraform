@@ -746,7 +746,7 @@ resource "kubectl_manifest" "nodepool_batch" {
             {
               key      = "karpenter.sh/capacity-type"
               operator = "In"
-              values   = ["spot"]
+              values   = ["spot", "on-demand"]
             },
             {
               key      = "kubernetes.io/arch"
