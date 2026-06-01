@@ -76,6 +76,9 @@ fi
 # 4.5. backend-secret 생성 (없으면)
 ###############################################################################
 log "    backend-secret 확인 중..."
+# 네임스페이스가 없을 수 있으므로 먼저 생성
+kubectl create namespace baselink-dev 2>/dev/null || true
+
 if ! kubectl get secret backend-secret -n baselink-dev >/dev/null 2>&1; then
   log "    backend-secret 생성 중..."
   RDS_SECRET_ARN=$(aws secretsmanager list-secrets --query 'SecretList[?contains(Name,`rds`)].ARN' --output text | head -1)
