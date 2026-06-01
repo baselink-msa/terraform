@@ -566,6 +566,15 @@ resource "kubectl_manifest" "ec2nodeclass" {
       instanceProfile            = aws_iam_instance_profile.karpenter_node.name
       subnetSelectorTerms        = [for id in var.node_subnet_ids : { id = id }]
       securityGroupSelectorTerms = [for id in var.node_security_group_ids : { id = id }]
+      blockDeviceMappings = [{
+        deviceName = "/dev/xvda"
+        ebs = {
+          volumeSize          = "50Gi"
+          volumeType          = "gp3"
+          encrypted           = true
+          deleteOnTermination = true
+        }
+      }]
       tags                       = var.tags
     }
   })
@@ -619,6 +628,7 @@ resource "kubectl_manifest" "nodepool_critical" {
               values   = ["4"]
             },
           ]
+          # 720h(30일): 노드 자동 교체로 OS·커널 패치 적용 강제
           expireAfter = "720h"
         }
       }
@@ -628,10 +638,10 @@ resource "kubectl_manifest" "nodepool_critical" {
       }
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
+        # 5분: surge 직후 premature scale-down 방지, 진행 중 트래픽 보호
         consolidateAfter    = "5m"
         budgets = [
-          { nodes = "10%" },
-          { nodes = "0", schedule = "50 4 * * *", duration = "2h" }
+          { nodes = "10%" }
         ]
       }
     }
@@ -680,6 +690,7 @@ resource "kubectl_manifest" "nodepool_general" {
               values   = ["4"]
             },
           ]
+          # 720h(30일): 노드 자동 교체로 OS·커널 패치 적용 강제
           expireAfter = "720h"
         }
       }
@@ -689,6 +700,7 @@ resource "kubectl_manifest" "nodepool_general" {
       }
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
+        # 1분: 비용 우선, 빠른 노드 축소
         consolidateAfter    = "1m"
         budgets = [
           { nodes = "10%" }
@@ -740,6 +752,7 @@ resource "kubectl_manifest" "nodepool_batch" {
               values   = ["4"]
             },
           ]
+          # 720h(30일): 노드 자동 교체로 OS·커널 패치 적용 강제
           expireAfter = "720h"
         }
       }
@@ -749,6 +762,7 @@ resource "kubectl_manifest" "nodepool_batch" {
       }
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
+        # 1분: 비용 우선, 빠른 노드 축소
         consolidateAfter    = "1m"
         budgets = [
           { nodes = "30%" }
