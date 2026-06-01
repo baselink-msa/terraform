@@ -92,6 +92,7 @@ module "rds" {
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_subnet_group_name   = aws_db_subnet_group.rds.name
   publicly_accessible    = false
+  multi_az               = true
   skip_final_snapshot    = true
   tags                   = local.common_tags
 }
