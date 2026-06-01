@@ -54,7 +54,17 @@ KARPENTER_INSTANCES=$(aws ec2 describe-instances \
 if [ -n "$KARPENTER_INSTANCES" ]; then
   log "    Karpenter 인스턴스 강제 종료: $KARPENTER_INSTANCES"
   aws ec2 terminate-instances --instance-ids $KARPENTER_INSTANCES >/dev/null 2>&1
-  aws ec2 wait instance-terminated --instance-ids $KARPENTER_INSTANCES 2>/dev/null || sleep 30
+  # 최대 90초 대기 후 진행
+  log "    인스턴스 종료 대기 중 (최대 90초)..."
+  WAIT_COUNT=0
+  while [ $WAIT_COUNT -lt 18 ]; do
+    STILL_RUNNING=$(aws ec2 describe-instances --instance-ids $KARPENTER_INSTANCES \
+      --filters "Name=instance-state-name,Values=running,shutting-down,stopping" \
+      --query 'Reservations[*].Instances[*].InstanceId' --output text 2>/dev/null)
+    if [ -z "$STILL_RUNNING" ]; then break; fi
+    sleep 5
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+  done
 fi
 log "    Karpenter 노드 정리 완료"
 
