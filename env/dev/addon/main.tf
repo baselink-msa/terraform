@@ -60,6 +60,16 @@ locals {
   rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
 }
 
+resource "kubectl_manifest" "backend_namespace" {
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Namespace"
+    metadata   = { name = "baselink-dev" }
+  })
+
+  depends_on = [module.eks_addons]
+}
+
 resource "kubectl_manifest" "backend_secret" {
   yaml_body = yamlencode({
     apiVersion = "v1"
@@ -76,5 +86,5 @@ resource "kubectl_manifest" "backend_secret" {
     }
   })
 
-  depends_on = [module.eks_addons]
+  depends_on = [kubectl_manifest.backend_namespace]
 }
