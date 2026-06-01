@@ -94,8 +94,8 @@ log "    git-ops 삭제 완료 ($(elapsed $STEP_START))"
 # 1.5. Karpenter 노드 정리 (ENI 잔류 방지)
 ###############################################################################
 log "    Karpenter 노드 정리 중..."
-kubectl delete nodeclaim --all -A 2>/dev/null || true
-kubectl delete nodepool --all -A 2>/dev/null || true
+kubectl delete nodeclaim --all -A --timeout=30s 2>/dev/null || true
+kubectl delete nodepool --all -A --timeout=30s 2>/dev/null || true
 
 # VPC ID 미리 확보
 VPC_ID=$(cd "$ENV_DIR/infra" && terraform output -raw vpc_id 2>/dev/null || echo "")
