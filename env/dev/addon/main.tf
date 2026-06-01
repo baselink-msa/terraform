@@ -45,15 +45,15 @@ module "argocd" {
 # backend-secret — RDS 비밀번호 + JWT Secret을 K8s Secret으로 생성
 # Secrets Manager에서 RDS 비밀번호를 읽어서 자동 생성
 #==============================================================================
-data "aws_secretsmanager_secret" "rds" {
+data "aws_secretsmanager_secrets" "rds" {
   filter {
-    key    = "tag-key"
-    values = ["aws:rds:primaryDBInstanceArn"]
+    key    = "name"
+    values = ["rds!"]
   }
 }
 
 data "aws_secretsmanager_secret_version" "rds" {
-  secret_id = data.aws_secretsmanager_secret.rds.id
+  secret_id = tolist(data.aws_secretsmanager_secrets.rds.arns)[0]
 }
 
 locals {
