@@ -21,6 +21,12 @@ variable "allocated_storage" {
   default     = 20
 }
 
+variable "multi_az" {
+  description = "Whether to enable a standby DB instance in another Availability Zone."
+  type        = bool
+  default     = false
+}
+
 variable "db_name" {
   description = "Initial database name."
   type        = string
