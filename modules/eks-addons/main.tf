@@ -198,8 +198,9 @@ data "aws_iam_policy_document" "karpenter_controller" {
     }
   }
 
-  # Karpenter v1은 EC2NodeClass 검증 단계에서 EC2 생성 권한을 사전 확인한다.
-  # 이 호출에는 생성 태그 조건이 맞지 않을 수 있어 별도로 허용한다.
+  # Karpenter v1 dry-run validation 요구사항.
+  # aws:RequestedRegion 으로 region scope 제한.
+  # 더 강한 제한(aws:RequestTag)은 dry-run 단계에선 적용 불가하여 region 만 적용.
   statement {
     sid    = "KarpenterProvisioningAuthCheck"
     effect = "Allow"
@@ -210,6 +211,11 @@ data "aws_iam_policy_document" "karpenter_controller" {
       "ec2:RunInstances",
     ]
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
   }
 
   statement {
@@ -260,12 +266,15 @@ data "aws_iam_policy_document" "karpenter_controller" {
     resources = ["*"]
   }
 
-  # AMI 파라미터 조회 (al2023 등)
+  # AMI 파라미터 조회 (al2023 등) — EKS 및 Bottlerocket AMI 경로로만 scope 제한
   statement {
     sid       = "KarpenterSSMRead"
     effect    = "Allow"
     actions   = ["ssm:GetParameter"]
-    resources = ["*"]
+    resources = [
+      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/eks/*",
+      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
+    ]
   }
 
   # 인스턴스 가격 조회 (최적 타입 선택용)

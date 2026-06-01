@@ -77,6 +77,14 @@ resource "aws_iam_role_policy" "cluster_kms" {
 #------------------------------------------------------------------------------
 # 2) EKS 클러스터 (컨트롤 플레인)
 #------------------------------------------------------------------------------
+
+# EKS 가 자동 생성하기 전에 미리 만들어두면 retention 정책이 적용됨
+resource "aws_cloudwatch_log_group" "eks_cluster" {
+  name              = "/aws/eks/${var.cluster_name}/cluster"
+  retention_in_days = 7
+  tags              = var.tags
+}
+
 resource "aws_eks_cluster" "this" {
   name     = var.cluster_name
   version  = var.kubernetes_version
@@ -114,6 +122,7 @@ resource "aws_eks_cluster" "this" {
   depends_on = [
     aws_iam_role_policy_attachment.cluster,
     aws_iam_role_policy.cluster_kms,
+    aws_cloudwatch_log_group.eks_cluster,
   ]
 }
 
