@@ -98,61 +98,21 @@ else
 fi
 
 ###############################################################################
-# 5. DB 마이그레이션 (seed-dev.sql 직접 실행)
+# 5. git-ops — kubectl apply
 ###############################################################################
-log "4.5/5 DB 시드 실행 중..."
-STEP_START=$(date +%s)
-cd "$GITOPS_ROOT"
-
-# ConfigMap(backend-config)을 먼저 apply (서비스가 참조함)
-kubectl apply -f base/namespace.yaml -f base/configmap.yaml 2>/dev/null || true
-
-# 기존 리소스 정리
-kubectl delete configmap seed-sql -n baselink-dev --ignore-not-found=true 2>/dev/null
-kubectl delete pod psql-seed-run -n baselink-dev --ignore-not-found=true 2>/dev/null
-
-# seed SQL을 ConfigMap으로 생성
-kubectl create configmap seed-sql \
-  --from-file=seed-dev.sql="$GITOPS_ROOT/db/seed-dev.sql" \
-  -n baselink-dev
-
-# psql Pod로 seed 실행 (amd64 노드에서, backend-secret의 비밀번호 사용)
-RDS_HOST=$(cd "$ENV_DIR/infra" && terraform output -raw rds_endpoint 2>/dev/null | cut -d: -f1 || echo "")
-if [ -z "$RDS_HOST" ]; then
-  warn "RDS 호스트를 못 읽었어요. DB 시드를 수동으로 실행하세요."
-else
-  kubectl run psql-seed-run --rm -i --restart=Never -n baselink-dev \
-    --overrides="{
-      \"spec\": {
-        \"nodeSelector\": {\"kubernetes.io/arch\": \"amd64\"},
-        \"containers\": [{
-          \"name\": \"psql\",
-          \"image\": \"postgres:16-alpine\",
-          \"command\": [\"sh\", \"-c\", \"psql -h $RDS_HOST -U baseball -d baseball_platform -f /sql/seed-dev.sql\"],
-          \"env\": [
-            {\"name\": \"PGPASSWORD\", \"valueFrom\": {\"secretKeyRef\": {\"name\": \"backend-secret\", \"key\": \"SPRING_DATASOURCE_PASSWORD\"}}}
-          ],
-          \"volumeMounts\": [{\"name\": \"sql\", \"mountPath\": \"/sql\"}]
-        }],
-        \"volumes\": [{\"name\": \"sql\", \"configMap\": {\"name\": \"seed-sql\"}}]
-      }
-    }" --image=postgres:16-alpine 2>&1 | tail -5
-
-  if [ $? -eq 0 ]; then
-    log "    DB 시드 완료 ($(elapsed $STEP_START))"
-  else
-    warn "DB 시드 실행 중 일부 오류 발생. 로그를 확인하세요."
-  fi
-fi
-
-###############################################################################
-# 6. git-ops — kubectl apply
-###############################################################################
-log "5/5 git-ops apply 시작..."
+log "5/6 git-ops apply 시작..."
 STEP_START=$(date +%s)
 cd "$GITOPS_ROOT"
 kubectl apply -k overlays/dev
 log "    git-ops 완료 ($(elapsed $STEP_START))"
+
+###############################################################################
+# 5.5. auth-service Ready 대기 (Flyway DB 마이그레이션 자동 실행)
+###############################################################################
+log "    auth-service 대기 중 (DB 마이그레이션 자동 실행)..."
+kubectl rollout status deploy/auth-service -n baselink-dev --timeout=180s 2>/dev/null \
+  && log "    auth-service Ready — DB 마이그레이션 완료" \
+  || warn "auth-service 시작 지연. 로그를 확인하세요: kubectl logs deploy/auth-service -n baselink-dev"
 
 ###############################################################################
 # 7. CloudFront ALB origin 업데이트
