@@ -99,7 +99,7 @@ variable "enable_interruption_queue" {
 variable "ami_alias" {
   description = "EC2NodeClass AMI alias. al2023@latest 는 apply 마다 노드 교체 위험 — 버전 고정 권장. 업그레이드 시 명시적으로 변경"
   type        = string
-  default     = "al2023@v20251101"
+  default     = "al2023@latest"
 }
 
 variable "node_arch" {
