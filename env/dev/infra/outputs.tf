@@ -92,3 +92,13 @@ output "ticket_confirm_queue_url" {
   description = "URL of the ticket confirmation SQS queue."
   value       = module.sqs_ticket_confirm.queue_url
 }
+
+output "ticket_confirm_dlq_url" {
+  description = "URL of the ticket confirmation dead-letter queue."
+  value       = module.sqs_ticket_confirm.dead_letter_queue_url
+}
+
+output "ticket_confirm_dlq_arn" {
+  description = "ARN of the ticket confirmation dead-letter queue."
+  value       = module.sqs_ticket_confirm.dead_letter_queue_arn
+}
