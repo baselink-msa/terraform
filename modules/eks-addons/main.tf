@@ -856,3 +856,20 @@ resource "kubernetes_annotations" "keda_predictive_pause" {
   # KEDA controller 가 먼저 떠 있어야 ScaledObject CRD 가 존재
   depends_on = [helm_release.keda]
 }
+
+#==============================================================================
+# 10) Metrics Server (EKS 관리형 애드온)
+#     KEDA type: cpu 트리거 / HPA / kubectl top 의 전제 — metrics.k8s.io API 제공.
+#     EKS는 기본 미설치라 명시적 추가 필요. 애드온 자체는 추가 과금 없음.
+#     metrics-server pod 는 시스템 노드(CriticalAddonsOnly toleration)에 배치됨.
+#==============================================================================
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name = var.cluster_name
+  addon_name   = "metrics-server"
+
+  # 기존에 manifest/CLI로 설치돼 있어도 Terraform이 인수하도록
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  tags = var.tags
+}
