@@ -103,5 +103,5 @@ variable "elasticache" {
 variable "aws_profile" {
   description = "AWS CLI profile name to use for authentication. Optional if using environment variables or instance roles."
   type        = string
-  default     = "sds"
+  default     = null
 }

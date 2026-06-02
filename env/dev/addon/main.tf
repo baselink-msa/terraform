@@ -45,15 +45,8 @@ module "argocd" {
 # backend-secret — RDS 비밀번호 + JWT Secret을 K8s Secret으로 생성
 # Secrets Manager에서 RDS 비밀번호를 읽어서 자동 생성
 #==============================================================================
-data "aws_secretsmanager_secrets" "rds" {
-  filter {
-    name   = "name"
-    values = ["rds!"]
-  }
-}
-
 data "aws_secretsmanager_secret_version" "rds" {
-  secret_id = tolist(data.aws_secretsmanager_secrets.rds.arns)[0]
+  secret_id = data.terraform_remote_state.infra.outputs.rds_master_user_secret_arn
 }
 
 locals {
@@ -75,7 +68,37 @@ resource "kubectl_manifest" "backend_namespace" {
   depends_on = [module.eks_addons]
 }
 
+resource "kubectl_manifest" "backend_config" {
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "ConfigMap"
+    metadata = {
+      name      = "backend-config"
+      namespace = "baselink-dev"
+    }
+    data = {
+      AWS_REGION                     = var.aws_region
+      SPRING_CLOUD_AWS_REGION_STATIC = var.aws_region
+      SPRING_CLOUD_AWS_SQS_ENDPOINT  = trimsuffix(data.terraform_remote_state.infra.outputs.ticket_confirm_queue_url, "/ticket-confirm-queue")
+      SQS_TICKET_CONFIRM_QUEUE_NAME  = "ticket-confirm-queue"
+      SPRING_DATASOURCE_URL          = "jdbc:postgresql://${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform"
+      SPRING_JPA_HIBERNATE_DDL_AUTO  = "validate"
+      SPRING_DATA_REDIS_HOST         = data.terraform_remote_state.infra.outputs.redis_primary_endpoint
+      SPRING_DATA_REDIS_PORT         = "6379"
+      KNOWLEDGE_BASE_ID              = "<bedrock-knowledge-base-id>"
+    }
+  })
+
+  depends_on = [kubectl_manifest.backend_namespace]
+}
+
 resource "kubectl_manifest" "backend_secret" {
+  sensitive_fields = [
+    "stringData.SPRING_DATASOURCE_USERNAME",
+    "stringData.SPRING_DATASOURCE_PASSWORD",
+    "stringData.APP_JWT_SECRET"
+  ]
+
   yaml_body = yamlencode({
     apiVersion = "v1"
     kind       = "Secret"
@@ -92,4 +115,64 @@ resource "kubectl_manifest" "backend_secret" {
   })
 
   depends_on = [kubectl_manifest.backend_namespace]
+}
+
+resource "kubectl_manifest" "postgres_keda_secret" {
+  sensitive_fields = [
+    "stringData.connection"
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    metadata = {
+      name      = "postgres-keda-secret"
+      namespace = "baselink-dev"
+    }
+    type = "Opaque"
+    stringData = {
+      connection = "postgresql://${urlencode(local.rds_creds["username"])}:${urlencode(local.rds_creds["password"])}@${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform?sslmode=require"
+    }
+  })
+
+  depends_on = [kubectl_manifest.backend_namespace]
+}
+
+resource "kubectl_manifest" "baselink_application" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "baselink-app"
+      namespace = "argocd"
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/baselink-msa/git-ops.git"
+        targetRevision = "main"
+        path           = "overlays/dev"
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "baselink-dev"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true"
+        ]
+      }
+    }
+  })
+
+  depends_on = [
+    module.argocd,
+    kubectl_manifest.backend_config,
+    kubectl_manifest.backend_secret,
+    kubectl_manifest.postgres_keda_secret
+  ]
 }

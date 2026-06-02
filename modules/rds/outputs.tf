@@ -12,3 +12,8 @@ output "db_name" {
   description = "생성된 데이터베이스 이름"
   value       = aws_db_instance.this.db_name
 }
+
+output "master_user_secret_arn" {
+  description = "ARN of the Secrets Manager secret managed by RDS for the master user."
+  value       = try(aws_db_instance.this.master_user_secret[0].secret_arn, null)
+}

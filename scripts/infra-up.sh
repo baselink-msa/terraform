@@ -8,7 +8,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TERRAFORM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../baselink-gitops" && pwd)"
+if [ -d "$TERRAFORM_ROOT/../gitops" ]; then
+  GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../gitops" && pwd)"
+elif [ -d "$TERRAFORM_ROOT/../baselink-gitops" ]; then
+  GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../baselink-gitops" && pwd)"
+else
+  echo "[ERR] gitops repository not found next to terraform repository."
+  exit 1
+fi
 
 ENV_DIR="$TERRAFORM_ROOT/env/dev"
 
@@ -81,8 +88,8 @@ kubectl create namespace baselink-dev 2>/dev/null || true
 
 if ! kubectl get secret backend-secret -n baselink-dev >/dev/null 2>&1; then
   log "    backend-secret 생성 중..."
-  RDS_SECRET_ARN=$(aws secretsmanager list-secrets --query 'SecretList[?contains(Name,`rds`)].ARN' --output text | head -1)
-  if [ -n "$RDS_SECRET_ARN" ]; then
+  RDS_SECRET_ARN=$(aws rds describe-db-instances --db-instance-identifier baselink-dev-postgres --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text 2>/dev/null || echo "")
+  if [ -n "$RDS_SECRET_ARN" ] && [ "$RDS_SECRET_ARN" != "None" ]; then
     RDS_CREDS=$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET_ARN" --query 'SecretString' --output text)
     DB_USER=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
     DB_PASS=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
@@ -101,13 +108,22 @@ else
 fi
 
 ###############################################################################
-# 5. git-ops — kubectl apply
+# 5. Argo CD — git-ops 자동 sync 대기
 ###############################################################################
-log "5/6 git-ops apply 시작..."
+log "5/6 Argo CD git-ops sync 대기 중..."
 STEP_START=$(date +%s)
-cd "$GITOPS_ROOT"
-kubectl apply -k overlays/dev
-log "    git-ops 완료 ($(elapsed $STEP_START))"
+SYNC_STATUS=""
+for i in $(seq 1 30); do
+  SYNC_STATUS=$(kubectl get application baselink-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+  if [ "$SYNC_STATUS" = "Synced" ]; then break; fi
+  sleep 10
+done
+
+if [ "$SYNC_STATUS" = "Synced" ]; then
+  log "    Argo CD sync 완료 ($(elapsed $STEP_START))"
+else
+  warn "Argo CD sync 지연. 확인: kubectl get application baselink-app -n argocd"
+fi
 
 ###############################################################################
 # 5.5. auth-service Ready 대기 (Flyway DB 마이그레이션 자동 실행)
