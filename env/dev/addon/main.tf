@@ -24,6 +24,8 @@ module "eks_addons" {
     data.terraform_remote_state.infra.outputs.eks_cluster_security_group_id
   ]
 
+  keda_predictive_paused = var.keda_predictive_paused
+
   tags = local.common_tags
 }
 

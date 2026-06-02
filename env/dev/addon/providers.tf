@@ -16,6 +16,10 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = ">= 1.14"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.30"
+    }
     random = {
       source  = "hashicorp/random"
       version = ">= 3.0"
@@ -62,4 +66,10 @@ provider "kubectl" {
   cluster_ca_certificate = base64decode(data.terraform_remote_state.infra.outputs.eks_cluster_certificate_authority_data)
   token                  = data.aws_eks_cluster_auth.this.token
   load_config_file       = false
+}
+
+provider "kubernetes" {
+  host                   = data.terraform_remote_state.infra.outputs.eks_cluster_endpoint
+  cluster_ca_certificate = base64decode(data.terraform_remote_state.infra.outputs.eks_cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.this.token
 }

@@ -114,3 +114,22 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+#--- Predictive scaling toggle (dev 비용 보호) ------------------------------
+variable "keda_predictive_paused" {
+  description = <<-EOT
+    true 면 predictive 트리거 가진 5개 ScaledObject 에 pause annotation 부여.
+    dev 에서 ticket_open_schedule 테스트 데이터 생성 시 불필요한 pod·node
+    scale-up 방지용. 기본 false (정상 동작).
+    영향: 해당 5개 ScaledObject 의 cpu + postgresql 트리거 모두 정지.
+    토글: terraform apply -var="keda_predictive_paused=true|false"
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "keda_target_namespace" {
+  description = "ScaledObject 가 배포된 네임스페이스 (git-ops 가 관리)"
+  type        = string
+  default     = "baselink-dev"
+}
