@@ -78,6 +78,11 @@ output "rds_endpoint" {
   value       = module.rds.db_instance_endpoint
 }
 
+output "rds_master_user_secret_arn" {
+  description = "ARN of the RDS-managed master user secret."
+  value       = module.rds.master_user_secret_arn
+}
+
 output "redis_primary_endpoint" {
   description = "Primary endpoint of the dev Redis replication group."
   value       = module.elasticache.primary_endpoint_address

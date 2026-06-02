@@ -8,7 +8,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TERRAFORM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../baselink-gitops" && pwd)"
+if [ -d "$TERRAFORM_ROOT/../gitops" ]; then
+  GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../gitops" && pwd)"
+elif [ -d "$TERRAFORM_ROOT/../baselink-gitops" ]; then
+  GITOPS_ROOT="$(cd "$TERRAFORM_ROOT/../baselink-gitops" && pwd)"
+else
+  echo "[ERR] gitops repository not found next to terraform repository."
+  exit 1
+fi
 
 ENV_DIR="$TERRAFORM_ROOT/env/dev"
 
@@ -87,6 +94,7 @@ TOTAL_START=$(date +%s)
 log "1/3 git-ops 서비스 내리는 중..."
 STEP_START=$(date +%s)
 cd "$GITOPS_ROOT"
+kubectl delete application baselink-app -n argocd --ignore-not-found=true 2>/dev/null || true
 kubectl delete -k overlays/dev --ignore-not-found=true 2>/dev/null || warn "kubectl delete 일부 실패 (무시)"
 log "    git-ops 삭제 완료 ($(elapsed $STEP_START))"
 
