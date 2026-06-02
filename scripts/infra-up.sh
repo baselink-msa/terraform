@@ -35,6 +35,15 @@ elapsed() {
 }
 
 TOTAL_START=$(date +%s)
+REGION="ap-northeast-2"
+
+###############################################################################
+# 0. AWS 인증 확인
+###############################################################################
+log "    AWS 인증 확인 중..."
+if ! aws sts get-caller-identity --region "$REGION" >/dev/null 2>&1; then
+  err "AWS 인증을 찾을 수 없습니다. aws configure, aws sso login, 또는 AWS_PROFILE 환경변수를 설정한 뒤 다시 실행하세요."
+fi
 
 ###############################################################################
 # 1. Terraform — infra
@@ -71,7 +80,6 @@ log "    addon 완료 ($(elapsed $STEP_START))"
 ###############################################################################
 log "    kubeconfig 업데이트 중..."
 CLUSTER_NAME=$(cd "$ENV_DIR/infra" && terraform output -raw eks_cluster_name 2>/dev/null || echo "")
-REGION="ap-northeast-2"
 
 if [ -n "$CLUSTER_NAME" ]; then
   aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION" --alias "$CLUSTER_NAME"
