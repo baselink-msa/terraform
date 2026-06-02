@@ -93,6 +93,12 @@ resource "kubectl_manifest" "backend_config" {
 }
 
 resource "kubectl_manifest" "backend_secret" {
+  sensitive_fields = [
+    "stringData.SPRING_DATASOURCE_USERNAME",
+    "stringData.SPRING_DATASOURCE_PASSWORD",
+    "stringData.APP_JWT_SECRET"
+  ]
+
   yaml_body = yamlencode({
     apiVersion = "v1"
     kind       = "Secret"
@@ -112,6 +118,10 @@ resource "kubectl_manifest" "backend_secret" {
 }
 
 resource "kubectl_manifest" "postgres_keda_secret" {
+  sensitive_fields = [
+    "stringData.connection"
+  ]
+
   yaml_body = yamlencode({
     apiVersion = "v1"
     kind       = "Secret"
