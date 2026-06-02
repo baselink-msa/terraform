@@ -27,3 +27,13 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "keda_predictive_paused" {
+  description = <<-EOT
+    true 면 KEDA predictive ScaledObject 5개 정지 (dev 비용 보호).
+    영향: 5개 ScaledObject 의 cpu + postgresql 트리거 모두 정지.
+    기본 false (정상 동작).
+  EOT
+  type        = bool
+  default     = false
+}
+

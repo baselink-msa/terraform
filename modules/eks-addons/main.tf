@@ -25,6 +25,10 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = ">= 1.14"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 2.30"
+    }
   }
 }
 
@@ -268,9 +272,9 @@ data "aws_iam_policy_document" "karpenter_controller" {
 
   # AMI 파라미터 조회 (al2023 등) — EKS 및 Bottlerocket AMI 경로로만 scope 제한
   statement {
-    sid       = "KarpenterSSMRead"
-    effect    = "Allow"
-    actions   = ["ssm:GetParameter"]
+    sid     = "KarpenterSSMRead"
+    effect  = "Allow"
+    actions = ["ssm:GetParameter"]
     resources = [
       "arn:aws:ssm:${var.aws_region}::parameter/aws/service/eks/*",
       "arn:aws:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
@@ -587,7 +591,7 @@ resource "kubectl_manifest" "ec2nodeclass" {
           deleteOnTermination = true
         }
       }]
-      tags                       = var.tags
+      tags = var.tags
     }
   })
 
@@ -651,7 +655,7 @@ resource "kubectl_manifest" "nodepool_critical" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 5분: surge 직후 premature scale-down 방지, 진행 중 트래픽 보호
-        consolidateAfter    = "5m"
+        consolidateAfter = "5m"
         budgets = [
           { nodes = "10%" }
         ]
@@ -713,7 +717,7 @@ resource "kubectl_manifest" "nodepool_general" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 1분: 비용 우선, 빠른 노드 축소
-        consolidateAfter    = "1m"
+        consolidateAfter = "1m"
         budgets = [
           { nodes = "10%" }
         ]
@@ -775,7 +779,7 @@ resource "kubectl_manifest" "nodepool_batch" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 1분: 비용 우선, 빠른 노드 축소
-        consolidateAfter    = "1m"
+        consolidateAfter = "1m"
         budgets = [
           { nodes = "30%" }
         ]
@@ -784,4 +788,63 @@ resource "kubectl_manifest" "nodepool_batch" {
   })
 
   depends_on = [kubectl_manifest.ec2nodeclass]
+}
+
+#==============================================================================
+# 8) Predictive scaling toggle (dev 비용 보호)
+#
+#    var.keda_predictive_paused = true 시 5개 predictive ScaledObject 에
+#    pause annotation 부여 → 모든 트리거 정지 + minReplicaCount 까지 강제 축소.
+#
+#    설계
+#      kubernetes_annotations 는 SSA 로 지정된 annotation 만 소유
+#      → ScaledObject 의 spec, 라벨, 다른 annotation 은 ArgoCD 가 계속 관리
+#      → ownership 충돌 없음
+#
+#    영향 범위
+#      paused 시 cpu 트리거 + postgresql 트리거 둘 다 정지 (ScaledObject 단위)
+#      dev 환경엔 실제 HTTP 트래픽 없으므로 cpu 정지는 실질 무관
+#
+#    제약
+#      ScaledObject 자체가 이미 클러스터에 존재해야 함 (ArgoCD sync 후 적용)
+#      ArgoCD self-heal=true 면 다음 ignoreDifferences 필요 (예림 협업):
+#        - /metadata/annotations/autoscaling.keda.sh~1paused
+#        - /metadata/annotations/autoscaling.keda.sh~1paused-replicas
+#
+#    토글
+#      terraform apply -var="keda_predictive_paused=true"   # 정지
+#      terraform apply -var="keda_predictive_paused=false"  # 재개
+#==============================================================================
+locals {
+  # ScaledObject 이름 → pause 시 강제할 replicas (각 ScaledObject 의 minReplicaCount)
+  keda_predictive_targets = {
+    "ticket-service-scaler"       = 2
+    "seat-lock-service-scaler"    = 2
+    "waiting-room-service-scaler" = 2
+    "auth-service-scaler"         = 2
+    "order-service-scaler"        = 2
+  }
+}
+
+resource "kubernetes_annotations" "keda_predictive_pause" {
+  for_each = var.keda_predictive_paused ? local.keda_predictive_targets : {}
+
+  api_version = "keda.sh/v1alpha1"
+  kind        = "ScaledObject"
+
+  metadata {
+    name      = each.key
+    namespace = var.keda_target_namespace
+  }
+
+  annotations = {
+    "autoscaling.keda.sh/paused"          = "true"
+    "autoscaling.keda.sh/paused-replicas" = tostring(each.value)
+  }
+
+  # ArgoCD 가 같은 annotation 을 다르게 관리하려 하면 강제 인수
+  force = true
+
+  # KEDA controller 가 먼저 떠 있어야 ScaledObject CRD 가 존재
+  depends_on = [helm_release.keda]
 }
