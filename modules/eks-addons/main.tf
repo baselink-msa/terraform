@@ -565,6 +565,14 @@ resource "helm_release" "keda" {
   }
 
   # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  dynamic "set" {
+    for_each = var.keda_operator_role_arn != "" ? [1] : []
+    content {
+      name  = "serviceAccount.operator.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = var.keda_operator_role_arn
+    }
+  }
+
   depends_on = [helm_release.aws_load_balancer_controller]
 }
 

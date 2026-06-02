@@ -14,12 +14,13 @@ locals {
 module "eks_addons" {
   source = "../../../modules/eks-addons"
 
-  cluster_name      = data.terraform_remote_state.infra.outputs.eks_cluster_name
-  aws_region        = var.aws_region
-  vpc_id            = data.terraform_remote_state.infra.outputs.vpc_id
-  oidc_provider_arn = data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn
-  oidc_provider_url = data.terraform_remote_state.infra.outputs.eks_oidc_provider_url
-  node_subnet_ids   = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
+  cluster_name           = data.terraform_remote_state.infra.outputs.eks_cluster_name
+  aws_region             = var.aws_region
+  vpc_id                 = data.terraform_remote_state.infra.outputs.vpc_id
+  oidc_provider_arn      = data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn
+  oidc_provider_url      = data.terraform_remote_state.infra.outputs.eks_oidc_provider_url
+  keda_operator_role_arn = data.terraform_remote_state.infra.outputs.backend_runtime_irsa_role_arn
+  node_subnet_ids        = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
   node_security_group_ids = [
     data.terraform_remote_state.infra.outputs.eks_cluster_security_group_id
   ]
@@ -79,15 +80,17 @@ resource "kubectl_manifest" "backend_config" {
       namespace = "baselink-dev"
     }
     data = {
-      AWS_REGION                     = var.aws_region
-      SPRING_CLOUD_AWS_REGION_STATIC = var.aws_region
-      SPRING_CLOUD_AWS_SQS_ENDPOINT  = trimsuffix(data.terraform_remote_state.infra.outputs.ticket_confirm_queue_url, "/ticket-confirm-queue")
-      SQS_TICKET_CONFIRM_QUEUE_NAME  = "ticket-confirm-queue"
-      SPRING_DATASOURCE_URL          = "jdbc:postgresql://${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform"
-      SPRING_JPA_HIBERNATE_DDL_AUTO  = "validate"
-      SPRING_DATA_REDIS_HOST         = data.terraform_remote_state.infra.outputs.redis_primary_endpoint
-      SPRING_DATA_REDIS_PORT         = "6379"
-      KNOWLEDGE_BASE_ID              = "<bedrock-knowledge-base-id>"
+      AWS_REGION                                 = var.aws_region
+      SPRING_CLOUD_AWS_REGION_STATIC             = var.aws_region
+      SPRING_CLOUD_AWS_SQS_ENDPOINT              = trimsuffix(data.terraform_remote_state.infra.outputs.ticket_confirm_queue_url, "/ticket-confirm-queue")
+      SQS_TICKET_CONFIRM_QUEUE_NAME              = "ticket-confirm-queue"
+      SPRING_DATASOURCE_URL                      = "jdbc:postgresql://${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "3"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "1"
+      SPRING_JPA_HIBERNATE_DDL_AUTO              = "validate"
+      SPRING_DATA_REDIS_HOST                     = data.terraform_remote_state.infra.outputs.redis_primary_endpoint
+      SPRING_DATA_REDIS_PORT                     = "6379"
+      KNOWLEDGE_BASE_ID                          = "<bedrock-knowledge-base-id>"
     }
   })
 
