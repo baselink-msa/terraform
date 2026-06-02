@@ -268,9 +268,9 @@ data "aws_iam_policy_document" "karpenter_controller" {
 
   # AMI 파라미터 조회 (al2023 등) — EKS 및 Bottlerocket AMI 경로로만 scope 제한
   statement {
-    sid       = "KarpenterSSMRead"
-    effect    = "Allow"
-    actions   = ["ssm:GetParameter"]
+    sid     = "KarpenterSSMRead"
+    effect  = "Allow"
+    actions = ["ssm:GetParameter"]
     resources = [
       "arn:aws:ssm:${var.aws_region}::parameter/aws/service/eks/*",
       "arn:aws:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
@@ -561,6 +561,14 @@ resource "helm_release" "keda" {
   }
 
   # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  dynamic "set" {
+    for_each = var.keda_operator_role_arn != "" ? [1] : []
+    content {
+      name  = "serviceAccount.operator.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = var.keda_operator_role_arn
+    }
+  }
+
   depends_on = [helm_release.aws_load_balancer_controller]
 }
 
@@ -587,7 +595,7 @@ resource "kubectl_manifest" "ec2nodeclass" {
           deleteOnTermination = true
         }
       }]
-      tags                       = var.tags
+      tags = var.tags
     }
   })
 
@@ -651,7 +659,7 @@ resource "kubectl_manifest" "nodepool_critical" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 5분: surge 직후 premature scale-down 방지, 진행 중 트래픽 보호
-        consolidateAfter    = "5m"
+        consolidateAfter = "5m"
         budgets = [
           { nodes = "10%" }
         ]
@@ -713,7 +721,7 @@ resource "kubectl_manifest" "nodepool_general" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 1분: 비용 우선, 빠른 노드 축소
-        consolidateAfter    = "1m"
+        consolidateAfter = "1m"
         budgets = [
           { nodes = "10%" }
         ]
@@ -775,7 +783,7 @@ resource "kubectl_manifest" "nodepool_batch" {
       disruption = {
         consolidationPolicy = "WhenEmptyOrUnderutilized"
         # 1분: 비용 우선, 빠른 노드 축소
-        consolidateAfter    = "1m"
+        consolidateAfter = "1m"
         budgets = [
           { nodes = "30%" }
         ]

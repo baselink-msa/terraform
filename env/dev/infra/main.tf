@@ -190,7 +190,10 @@ data "aws_iam_policy_document" "backend_runtime_irsa_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "${local.eks_oidc_issuer}:sub"
-      values   = ["system:serviceaccount:baselink-dev:backend-runtime"]
+      values = [
+        "system:serviceaccount:baselink-dev:backend-runtime",
+        "system:serviceaccount:keda:keda-operator"
+      ]
     }
   }
 }

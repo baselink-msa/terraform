@@ -82,6 +82,12 @@ variable "keda_namespace" {
   default     = "keda"
 }
 
+variable "keda_operator_role_arn" {
+  description = "Optional IRSA role ARN used by the KEDA operator for AWS-backed scalers."
+  type        = string
+  default     = ""
+}
+
 variable "aws_load_balancer_controller_namespace" {
   description = "Namespace for AWS Load Balancer Controller."
   type        = string
