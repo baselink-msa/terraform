@@ -126,6 +126,73 @@ else
 fi
 
 ###############################################################################
+# 5.1. API ALB 직접 접근 차단 annotation 적용
+###############################################################################
+log "    API ALB 직접 접근 차단 annotation 적용 중..."
+CF_DIST_ID="E1L0BJIJOTT0R6"
+ORIGIN_HEADER_NAME="${CF_ORIGIN_VERIFY_HEADER_NAME:-X-Origin-Verify}"
+ORIGIN_HEADER_VALUE="${CF_ORIGIN_VERIFY_HEADER_VALUE:-}"
+
+CF_PREFIX_LIST_ID=$(aws ec2 describe-managed-prefix-lists \
+  --region "$REGION" \
+  --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing \
+  --query 'PrefixLists[0].PrefixListId' \
+  --output text 2>/dev/null || echo "")
+
+if [ -n "$CF_PREFIX_LIST_ID" ] && [ "$CF_PREFIX_LIST_ID" != "None" ]; then
+  kubectl annotate ingress baselink-api -n baselink-dev \
+    "alb.ingress.kubernetes.io/security-group-prefix-lists=$CF_PREFIX_LIST_ID" \
+    --overwrite >/dev/null
+  log "    ALB ingress source를 CloudFront managed prefix list로 제한: $CF_PREFIX_LIST_ID"
+else
+  warn "CloudFront managed prefix list ID를 못 읽었습니다. ALB SG 제한 annotation을 건너뜁니다."
+fi
+
+if [ -z "$ORIGIN_HEADER_VALUE" ]; then
+  CF_CONFIG_FOR_HEADER=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json 2>/dev/null || echo "")
+  if [ -n "$CF_CONFIG_FOR_HEADER" ]; then
+    ORIGIN_HEADER_VALUE=$(echo "$CF_CONFIG_FOR_HEADER" | ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" python3 -c "
+import json, os, sys
+try:
+    config = json.load(sys.stdin)['DistributionConfig']
+except Exception:
+    print('')
+    raise SystemExit
+header_name = os.environ['ORIGIN_HEADER_NAME'].lower()
+for origin in config.get('Origins', {}).get('Items', []):
+    if 'elb.amazonaws.com' not in origin.get('DomainName', '') and origin.get('Id', '') != 'api':
+        continue
+    for header in origin.get('CustomHeaders', {}).get('Items', []):
+        if header.get('HeaderName', '').lower() == header_name:
+            print(header.get('HeaderValue', ''))
+            raise SystemExit
+print('')
+")
+  fi
+fi
+
+if [ -n "$ORIGIN_HEADER_VALUE" ]; then
+  for svc in auth-service game-service admin-service waiting-room-service ai-chatbot-service order-service seat-lock-service ticket-service; do
+    CONDITION_JSON=$(ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" ORIGIN_HEADER_VALUE="$ORIGIN_HEADER_VALUE" python3 -c "
+import json, os
+print(json.dumps([{
+    'field': 'http-header',
+    'httpHeaderConfig': {
+        'httpHeaderName': os.environ['ORIGIN_HEADER_NAME'],
+        'values': [os.environ['ORIGIN_HEADER_VALUE']]
+    }
+}], separators=(',', ':')))
+")
+    kubectl annotate ingress baselink-api -n baselink-dev \
+      "alb.ingress.kubernetes.io/conditions.$svc=$CONDITION_JSON" \
+      --overwrite >/dev/null
+  done
+  log "    CloudFront origin custom header 조건을 API ALB rule에 적용"
+else
+  warn "CloudFront ALB origin에서 $ORIGIN_HEADER_NAME custom header 값을 못 읽었습니다. header 조건 annotation을 건너뜁니다."
+fi
+
+###############################################################################
 # 5.5. auth-service Ready 대기 (Flyway DB 마이그레이션 자동 실행)
 ###############################################################################
 log "    auth-service 대기 중 (DB 마이그레이션 자동 실행)..."
@@ -142,7 +209,6 @@ set -e
 # 7. CloudFront ALB origin 업데이트
 ###############################################################################
 log "    CloudFront origin 업데이트 중..."
-CF_DIST_ID="E1L0BJIJOTT0R6"
 
 # Ingress가 ALB를 프로비저닝할 때까지 대기 (최대 3분)
 ALB_HOST=""
@@ -157,14 +223,27 @@ if [ -n "$ALB_HOST" ]; then
   CF_CONFIG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json)
   ETAG=$(echo "$CF_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['ETag'])")
   
-  # ALB origin 도메인 업데이트
-  UPDATED_CONFIG=$(echo "$CF_CONFIG" | python3 -c "
-import sys, json
+  # ALB origin 도메인 업데이트. Origin custom header는 콘솔 설정을 보존한다.
+  UPDATED_CONFIG=$(echo "$CF_CONFIG" | ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" ORIGIN_HEADER_VALUE="$ORIGIN_HEADER_VALUE" python3 -c "
+import os, sys, json
 config = json.load(sys.stdin)
 dist_config = config['DistributionConfig']
 for origin in dist_config['Origins']['Items']:
     if 'elb.amazonaws.com' in origin.get('DomainName', '') or origin.get('Id','') == 'api':
         origin['DomainName'] = '$ALB_HOST'
+        if os.environ.get('ORIGIN_HEADER_VALUE'):
+            headers = origin.setdefault('CustomHeaders', {'Quantity': 0})
+            items = headers.setdefault('Items', [])
+            header_name = os.environ['ORIGIN_HEADER_NAME']
+            header_value = os.environ['ORIGIN_HEADER_VALUE']
+            for header in items:
+                if header.get('HeaderName', '').lower() == header_name.lower():
+                    header['HeaderName'] = header_name
+                    header['HeaderValue'] = header_value
+                    break
+            else:
+                items.append({'HeaderName': header_name, 'HeaderValue': header_value})
+            headers['Quantity'] = len(items)
         break
 json.dump(dist_config, sys.stdout)
 ")
