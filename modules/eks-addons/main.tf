@@ -182,67 +182,128 @@ resource "aws_iam_role" "karpenter_controller" {
 }
 
 data "aws_iam_policy_document" "karpenter_controller" {
-  # 노드 프로비저닝: 인스턴스·런치템플릿 생성/태깅/삭제
+  # 생성 시 "참조"하는 기존 리소스 (서브넷·보안그룹·AMI 등) — RequestTag 부착 불가 대상
   statement {
-    sid    = "KarpenterEC2Write"
-    effect = "Allow"
-    actions = [
-      "ec2:RunInstances",
-      "ec2:CreateFleet",
-      "ec2:CreateLaunchTemplate",
-      "ec2:CreateTags",
-      "ec2:TerminateInstances",
-      "ec2:DeleteLaunchTemplate",
+    sid     = "AllowScopedEC2InstanceAccessActions"
+    effect  = "Allow"
+    actions = ["ec2:RunInstances", "ec2:CreateFleet"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}::image/*",
+      "arn:${local.partition}:ec2:${var.aws_region}::snapshot/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:security-group/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:subnet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:capacity-reservation/*",
     ]
-    resources = ["*"]
+  }
+
+  # 생성 시 "참조"하는 launch template — Karpenter 가 만든 것(태그 보유)만
+  statement {
+    sid       = "AllowScopedEC2LaunchTemplateAccessActions"
+    effect    = "Allow"
+    actions   = ["ec2:RunInstances", "ec2:CreateFleet"]
+    resources = ["arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*"]
     condition {
       test     = "StringEquals"
-      variable = "aws:RequestTag/karpenter.sh/managed-by"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # 생성물(인스턴스·볼륨 등) — 요청에 실리는 태그(실측 확인됨)로 스코프
+  statement {
+    sid     = "AllowScopedEC2InstanceActionsWithTags"
+    effect  = "Allow"
+    actions = ["ec2:RunInstances", "ec2:CreateFleet", "ec2:CreateLaunchTemplate"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
       values   = [var.cluster_name]
     }
-  }
-
-  # Karpenter v1 dry-run validation 요구사항.
-  # aws:RequestedRegion 으로 region scope 제한.
-  # 더 강한 제한(aws:RequestTag)은 dry-run 단계에선 적용 불가하여 region 만 적용.
-  statement {
-    sid    = "KarpenterProvisioningAuthCheck"
-    effect = "Allow"
-    actions = [
-      "ec2:CreateFleet",
-      "ec2:CreateLaunchTemplate",
-      "ec2:DeleteLaunchTemplate",
-      "ec2:RunInstances",
-    ]
-    resources = ["*"]
     condition {
-      test     = "StringEquals"
-      variable = "aws:RequestedRegion"
-      values   = [var.aws_region]
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
     }
   }
 
+  # 생성 "시점"의 태깅 (CreateAction 한정 + 요청 태그 검증)
   statement {
-    sid     = "KarpenterLaunchTemplateTagging"
+    sid     = "AllowScopedResourceCreationTagging"
     effect  = "Allow"
     actions = ["ec2:CreateTags"]
     resources = [
       "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
       "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
       "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
     ]
-
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.cluster_name]
+    }
     condition {
       test     = "StringEquals"
       variable = "ec2:CreateAction"
-      values = [
-        "CreateFleet",
-        "CreateLaunchTemplate",
-        "RunInstances",
-      ]
+      values   = ["RunInstances", "CreateFleet", "CreateLaunchTemplate"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # 생성 "후" 인스턴스 태깅 — nodeclaim/Name/eks-cluster-name 3종 키로 한정 (발견 B 해결)
+  statement {
+    sid       = "AllowScopedResourceTagging"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:${local.partition}:ec2:${var.aws_region}:*:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.cluster_name]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["eks:eks-cluster-name", "karpenter.sh/nodeclaim", "Name"]
     }
   }
 
@@ -257,8 +318,14 @@ data "aws_iam_policy_document" "karpenter_controller" {
     resources = ["*"]
     condition {
       test     = "StringEquals"
-      variable = "ec2:ResourceTag/karpenter.sh/managed-by"
-      values   = [var.cluster_name]
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
     }
   }
 
@@ -276,8 +343,8 @@ data "aws_iam_policy_document" "karpenter_controller" {
     effect  = "Allow"
     actions = ["ssm:GetParameter"]
     resources = [
-      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/eks/*",
-      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
+      "arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/eks/*",
+      "arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
     ]
   }
 
@@ -382,6 +449,13 @@ resource "aws_eks_access_entry" "karpenter_node" {
   cluster_name  = var.cluster_name
   principal_arn = aws_iam_role.karpenter_node.arn
   type          = "EC2_LINUX"
+}
+
+# EC2 Spot service-linked role (계정당 1회).
+# 부재 시 Spot CreateFleet 이 실패하여 batch/general 의 Spot 설계가 동작하지 않음.
+# 실측: 2026-06-04 기준 본 계정에 미존재 확인 → Terraform 으로 생성·관리.
+resource "aws_iam_service_linked_role" "ec2_spot" {
+  aws_service_name = "spot.amazonaws.com"
 }
 
 #==============================================================================
@@ -564,7 +638,7 @@ resource "helm_release" "keda" {
     value = "NoSchedule"
   }
 
-  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  # KEDA operator ServiceAccount 에 IRSA 역할 연결 (role arn 전달된 경우에만)
   dynamic "set" {
     for_each = var.keda_operator_role_arn != "" ? [1] : []
     content {
@@ -573,6 +647,7 @@ resource "helm_release" "keda" {
     }
   }
 
+  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
   depends_on = [helm_release.aws_load_balancer_controller]
 }
 
@@ -737,7 +812,7 @@ resource "kubectl_manifest" "nodepool_general" {
 }
 
 # batch: ticket-worker (SQS 비동기 처리)
-#   Spot only — 중단 시 SQS 재처리 가능, 적극 축소(30%)
+#   Spot 우선 + OnDemand 폴백 — 중단 시 SQS 재처리 가능, 적극 축소(30%)
 resource "kubectl_manifest" "nodepool_batch" {
   yaml_body = yamlencode({
     apiVersion = "karpenter.sh/v1"
@@ -858,7 +933,7 @@ resource "kubernetes_annotations" "keda_predictive_pause" {
 }
 
 #==============================================================================
-# 10) Metrics Server (EKS 관리형 애드온)
+# 9) Metrics Server (EKS 관리형 애드온)
 #     KEDA type: cpu 트리거 / HPA / kubectl top 의 전제 — metrics.k8s.io API 제공.
 #     EKS는 기본 미설치라 명시적 추가 필요. 애드온 자체는 추가 과금 없음.
 #     metrics-server pod 는 시스템 노드(CriticalAddonsOnly toleration)에 배치됨.
