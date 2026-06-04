@@ -131,7 +131,11 @@ module "sqs_ticket_confirm" {
   create_dead_letter_queue = true
   dead_letter_queue_name   = "ticket-confirm-dlq"
   max_receive_count        = 5
-  tags                     = local.common_tags
+
+  create_dead_letter_queue_alarm = true
+  dead_letter_queue_alarm_name   = "${local.name_prefix}-ticket-confirm-dlq-messages-visible"
+
+  tags = local.common_tags
 }
 
 resource "aws_iam_role_policy" "eks_node_backend_runtime" {

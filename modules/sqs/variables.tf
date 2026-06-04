@@ -55,6 +55,48 @@ variable "max_receive_count" {
   }
 }
 
+variable "create_dead_letter_queue_alarm" {
+  description = "Whether to create a CloudWatch alarm for visible messages in the dead-letter queue."
+  type        = bool
+  default     = false
+}
+
+variable "dead_letter_queue_alarm_name" {
+  description = "Optional CloudWatch alarm name. Defaults to <queue_name>-dlq-messages-visible."
+  type        = string
+  default     = null
+}
+
+variable "dead_letter_queue_alarm_threshold" {
+  description = "Visible DLQ message count that causes the alarm to enter ALARM state."
+  type        = number
+  default     = 1
+}
+
+variable "dead_letter_queue_alarm_period" {
+  description = "CloudWatch metric evaluation period in seconds."
+  type        = number
+  default     = 60
+}
+
+variable "dead_letter_queue_alarm_evaluation_periods" {
+  description = "Number of consecutive periods evaluated by the DLQ alarm."
+  type        = number
+  default     = 1
+}
+
+variable "dead_letter_queue_alarm_actions" {
+  description = "ARNs notified when the DLQ alarm enters ALARM state."
+  type        = list(string)
+  default     = []
+}
+
+variable "dead_letter_queue_alarm_ok_actions" {
+  description = "ARNs notified when the DLQ alarm returns to OK state."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "리소스에 부여할 태그"
   type        = map(string)

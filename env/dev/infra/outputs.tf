@@ -102,3 +102,13 @@ output "ticket_confirm_dlq_arn" {
   description = "ARN of the ticket confirmation dead-letter queue."
   value       = module.sqs_ticket_confirm.dead_letter_queue_arn
 }
+
+output "ticket_confirm_dlq_alarm_name" {
+  description = "Name of the ticket confirmation DLQ CloudWatch alarm."
+  value       = module.sqs_ticket_confirm.dead_letter_queue_alarm_name
+}
+
+output "ticket_confirm_dlq_alarm_arn" {
+  description = "ARN of the ticket confirmation DLQ CloudWatch alarm."
+  value       = module.sqs_ticket_confirm.dead_letter_queue_alarm_arn
+}
