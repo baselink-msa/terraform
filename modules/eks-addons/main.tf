@@ -182,26 +182,6 @@ resource "aws_iam_role" "karpenter_controller" {
 }
 
 data "aws_iam_policy_document" "karpenter_controller" {
-  # [Phase 2 에서 제거 예정] 과거 "dry-run 엔 RequestTag 적용 불가" 전제로 추가됐으나
-  # CloudTrail 실측 결과 dry-run 도 TagSpecifications 를 포함함이 확인됨.
-  # 위 공식 statement 들의 단독 충분성 검증(30분 주기 dry-run 통과) 후 제거한다.
-  statement {
-    sid    = "KarpenterProvisioningAuthCheck"
-    effect = "Allow"
-    actions = [
-      "ec2:CreateFleet",
-      "ec2:CreateLaunchTemplate",
-      "ec2:DeleteLaunchTemplate",
-      "ec2:RunInstances",
-    ]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestedRegion"
-      values   = [var.aws_region]
-    }
-  }
-
   # 생성 시 "참조"하는 기존 리소스 (서브넷·보안그룹·AMI 등) — RequestTag 부착 불가 대상
   statement {
     sid     = "AllowScopedEC2InstanceAccessActions"
