@@ -32,3 +32,28 @@ resource "aws_sqs_queue_redrive_allow_policy" "dead_letter" {
     sourceQueueArns   = [aws_sqs_queue.this.arn]
   })
 }
+
+resource "aws_cloudwatch_metric_alarm" "dead_letter_messages_visible" {
+  count = var.create_dead_letter_queue && var.create_dead_letter_queue_alarm ? 1 : 0
+
+  alarm_name          = var.dead_letter_queue_alarm_name != null ? var.dead_letter_queue_alarm_name : "${var.queue_name}-dlq-messages-visible"
+  alarm_description   = "Detects messages waiting in the dead-letter queue for ${var.queue_name}."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = var.dead_letter_queue_alarm_evaluation_periods
+  threshold           = var.dead_letter_queue_alarm_threshold
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = var.dead_letter_queue_alarm_period
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.dead_letter_queue_alarm_actions
+  ok_actions          = var.dead_letter_queue_alarm_ok_actions
+
+  dimensions = {
+    QueueName = aws_sqs_queue.dead_letter[0].name
+  }
+
+  tags = merge(var.tags, {
+    Purpose = "dead-letter-queue-alarm"
+  })
+}
