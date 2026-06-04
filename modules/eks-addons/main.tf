@@ -451,6 +451,13 @@ resource "aws_eks_access_entry" "karpenter_node" {
   type          = "EC2_LINUX"
 }
 
+# EC2 Spot service-linked role (계정당 1회).
+# 부재 시 Spot CreateFleet 이 실패하여 batch/general 의 Spot 설계가 동작하지 않음.
+# 실측: 2026-06-04 기준 본 계정에 미존재 확인 → Terraform 으로 생성·관리.
+resource "aws_iam_service_linked_role" "ec2_spot" {
+  aws_service_name = "spot.amazonaws.com"
+}
+
 #==============================================================================
 # 3) 중단 알림 SQS 큐 + EventBridge 규칙  (enable_interruption_queue)
 #    Spot 회수·인스턴스 상태 변경 이벤트를 받아, Karpenter가 노드를
