@@ -257,8 +257,14 @@ data "aws_iam_policy_document" "karpenter_controller" {
     resources = ["*"]
     condition {
       test     = "StringEquals"
-      variable = "ec2:ResourceTag/karpenter.sh/managed-by"
-      values   = [var.cluster_name]
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
     }
   }
 
