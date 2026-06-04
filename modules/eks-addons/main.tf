@@ -182,29 +182,9 @@ resource "aws_iam_role" "karpenter_controller" {
 }
 
 data "aws_iam_policy_document" "karpenter_controller" {
-  # 노드 프로비저닝: 인스턴스·런치템플릿 생성/태깅/삭제
-  statement {
-    sid    = "KarpenterEC2Write"
-    effect = "Allow"
-    actions = [
-      "ec2:RunInstances",
-      "ec2:CreateFleet",
-      "ec2:CreateLaunchTemplate",
-      "ec2:CreateTags",
-      "ec2:TerminateInstances",
-      "ec2:DeleteLaunchTemplate",
-    ]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/karpenter.sh/managed-by"
-      values   = [var.cluster_name]
-    }
-  }
-
-  # Karpenter v1 dry-run validation 요구사항.
-  # aws:RequestedRegion 으로 region scope 제한.
-  # 더 강한 제한(aws:RequestTag)은 dry-run 단계에선 적용 불가하여 region 만 적용.
+  # [Phase 2 에서 제거 예정] 과거 "dry-run 엔 RequestTag 적용 불가" 전제로 추가됐으나
+  # CloudTrail 실측 결과 dry-run 도 TagSpecifications 를 포함함이 확인됨.
+  # 위 공식 statement 들의 단독 충분성 검증(30분 주기 dry-run 통과) 후 제거한다.
   statement {
     sid    = "KarpenterProvisioningAuthCheck"
     effect = "Allow"
@@ -222,27 +202,128 @@ data "aws_iam_policy_document" "karpenter_controller" {
     }
   }
 
+  # 생성 시 "참조"하는 기존 리소스 (서브넷·보안그룹·AMI 등) — RequestTag 부착 불가 대상
   statement {
-    sid     = "KarpenterLaunchTemplateTagging"
+    sid     = "AllowScopedEC2InstanceAccessActions"
+    effect  = "Allow"
+    actions = ["ec2:RunInstances", "ec2:CreateFleet"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}::image/*",
+      "arn:${local.partition}:ec2:${var.aws_region}::snapshot/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:security-group/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:subnet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:capacity-reservation/*",
+    ]
+  }
+
+  # 생성 시 "참조"하는 launch template — Karpenter 가 만든 것(태그 보유)만
+  statement {
+    sid       = "AllowScopedEC2LaunchTemplateAccessActions"
+    effect    = "Allow"
+    actions   = ["ec2:RunInstances", "ec2:CreateFleet"]
+    resources = ["arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # 생성물(인스턴스·볼륨 등) — 요청에 실리는 태그(실측 확인됨)로 스코프
+  statement {
+    sid     = "AllowScopedEC2InstanceActionsWithTags"
+    effect  = "Allow"
+    actions = ["ec2:RunInstances", "ec2:CreateFleet", "ec2:CreateLaunchTemplate"]
+    resources = [
+      "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.cluster_name]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # 생성 "시점"의 태깅 (CreateAction 한정 + 요청 태그 검증)
+  statement {
+    sid     = "AllowScopedResourceCreationTagging"
     effect  = "Allow"
     actions = ["ec2:CreateTags"]
     resources = [
       "arn:${local.partition}:ec2:${var.aws_region}:*:fleet/*",
       "arn:${local.partition}:ec2:${var.aws_region}:*:instance/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
-      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
       "arn:${local.partition}:ec2:${var.aws_region}:*:volume/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:network-interface/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:launch-template/*",
+      "arn:${local.partition}:ec2:${var.aws_region}:*:spot-instances-request/*",
     ]
-
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.cluster_name]
+    }
     condition {
       test     = "StringEquals"
       variable = "ec2:CreateAction"
-      values = [
-        "CreateFleet",
-        "CreateLaunchTemplate",
-        "RunInstances",
-      ]
+      values   = ["RunInstances", "CreateFleet", "CreateLaunchTemplate"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+  }
+
+  # 생성 "후" 인스턴스 태깅 — nodeclaim/Name/eks-cluster-name 3종 키로 한정 (발견 B 해결)
+  statement {
+    sid       = "AllowScopedResourceTagging"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:${local.partition}:ec2:${var.aws_region}:*:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
+      values   = ["owned"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "aws:ResourceTag/karpenter.sh/nodepool"
+      values   = ["*"]
+    }
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "aws:RequestTag/eks:eks-cluster-name"
+      values   = [var.cluster_name]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["eks:eks-cluster-name", "karpenter.sh/nodeclaim", "Name"]
     }
   }
 
