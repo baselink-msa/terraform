@@ -282,8 +282,8 @@ data "aws_iam_policy_document" "karpenter_controller" {
     effect  = "Allow"
     actions = ["ssm:GetParameter"]
     resources = [
-      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/eks/*",
-      "arn:aws:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
+      "arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/eks/*",
+      "arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/bottlerocket/*",
     ]
   }
 
@@ -570,7 +570,7 @@ resource "helm_release" "keda" {
     value = "NoSchedule"
   }
 
-  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  # KEDA operator ServiceAccount 에 IRSA 역할 연결 (role arn 전달된 경우에만)
   dynamic "set" {
     for_each = var.keda_operator_role_arn != "" ? [1] : []
     content {
@@ -579,6 +579,7 @@ resource "helm_release" "keda" {
     }
   }
 
+  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
   depends_on = [helm_release.aws_load_balancer_controller]
 }
 
@@ -743,7 +744,7 @@ resource "kubectl_manifest" "nodepool_general" {
 }
 
 # batch: ticket-worker (SQS 비동기 처리)
-#   Spot only — 중단 시 SQS 재처리 가능, 적극 축소(30%)
+#   Spot 우선 + OnDemand 폴백 — 중단 시 SQS 재처리 가능, 적극 축소(30%)
 resource "kubectl_manifest" "nodepool_batch" {
   yaml_body = yamlencode({
     apiVersion = "karpenter.sh/v1"
@@ -864,7 +865,7 @@ resource "kubernetes_annotations" "keda_predictive_pause" {
 }
 
 #==============================================================================
-# 10) Metrics Server (EKS 관리형 애드온)
+# 9) Metrics Server (EKS 관리형 애드온)
 #     KEDA type: cpu 트리거 / HPA / kubectl top 의 전제 — metrics.k8s.io API 제공.
 #     EKS는 기본 미설치라 명시적 추가 필요. 애드온 자체는 추가 과금 없음.
 #     metrics-server pod 는 시스템 노드(CriticalAddonsOnly toleration)에 배치됨.
