@@ -112,3 +112,13 @@ output "ticket_confirm_dlq_alarm_arn" {
   description = "ARN of the ticket confirmation DLQ CloudWatch alarm."
   value       = module.sqs_ticket_confirm.dead_letter_queue_alarm_arn
 }
+
+output "ops_alerts_sns_topic_arn" {
+  description = "SNS topic ARN used for team operations alerts."
+  value       = var.enable_slack_alerts ? aws_sns_topic.ops_alerts[0].arn : null
+}
+
+output "ops_alerts_slack_configuration_arn" {
+  description = "Amazon Q Developer Slack channel configuration ARN for operations alerts."
+  value       = var.enable_slack_alerts ? aws_chatbot_slack_channel_configuration.ops_alerts[0].chat_configuration_arn : null
+}
