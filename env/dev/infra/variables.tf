@@ -105,3 +105,21 @@ variable "aws_profile" {
   type        = string
   default     = null
 }
+
+variable "enable_slack_alerts" {
+  description = "Whether to send CloudWatch alarm notifications to the team Slack channel through Amazon Q Developer."
+  type        = bool
+  default     = true
+}
+
+variable "slack_workspace_id" {
+  description = "Slack workspace ID connected to Amazon Q Developer in chat applications."
+  type        = string
+  default     = "T0B2G4P9WBZ"
+}
+
+variable "slack_channel_id" {
+  description = "Slack channel ID that receives AWS alarm notifications."
+  type        = string
+  default     = "C0B80N6DAJX"
+}

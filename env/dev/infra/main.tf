@@ -132,8 +132,10 @@ module "sqs_ticket_confirm" {
   dead_letter_queue_name   = "ticket-confirm-dlq"
   max_receive_count        = 5
 
-  create_dead_letter_queue_alarm = true
-  dead_letter_queue_alarm_name   = "${local.name_prefix}-ticket-confirm-dlq-messages-visible"
+  create_dead_letter_queue_alarm     = true
+  dead_letter_queue_alarm_name       = "${local.name_prefix}-ticket-confirm-dlq-messages-visible"
+  dead_letter_queue_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+  dead_letter_queue_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
 
   tags = local.common_tags
 }
