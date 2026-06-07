@@ -22,7 +22,7 @@ variable "curve_db_user" {
 
 variable "ceiling_rps" {
   type        = number
-  default     = 50
+  default     = 160
   description = "CloudWatch 에 발행할 predicted_rps 최대 clamp 값"
 }
 
