@@ -376,3 +376,82 @@ resource "aws_eks_pod_identity_association" "keda_cloudwatch" {
     Project = "curve-scaler"
   }
 }
+
+# ────────────────────────────────────────────────────────────────────
+# P6: 워치독 알람 (W4 heartbeat / W1 clamp / Werr Lambda errors) + SNS
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_sns_topic" "curve_alerts" {
+  name = "${local.name_prefix}-alerts"
+  tags = { Project = "curve-scaler" }
+}
+
+resource "aws_sns_topic_subscription" "curve_alerts_email" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.curve_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# W4: heartbeat 소실 (죽은 자는 부고를 못 보낸다 — 침묵=사망 판정)
+resource "aws_cloudwatch_metric_alarm" "w4_heartbeat_lost" {
+  alarm_name          = "${local.name_prefix}-W4-heartbeat-lost"
+  alarm_description   = "emitter 침묵 3분 — Lambda/VPC/DB 장애 가능성"
+  namespace           = "Baselink/CurveScaler"
+  metric_name         = "heartbeat"
+  statistic           = "Sum"
+  period              = 60
+  evaluation_periods  = 3
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
+
+# W1: clamp 발동 (예측값이 ceiling 에 도달)
+resource "aws_cloudwatch_metric_alarm" "w1_clamp_engaged" {
+  alarm_name        = "${local.name_prefix}-W1-clamp-engaged"
+  alarm_description = "predicted_rps ceiling(${var.ceiling_rps}) 도달 — 과대 예측 또는 계획 오염 확인"
+  namespace         = "Baselink/CurveScaler"
+  metric_name       = "clamp_engaged"
+  dimensions = {
+    service = "order"
+  }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
+
+# Werr: Lambda 오류 — writer / emitter 각각 (for_each 2개)
+locals {
+  _lambda_alarm_fns = {
+    writer  = aws_lambda_function.writer.function_name
+    emitter = aws_lambda_function.emitter.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "werr_lambda_errors" {
+  for_each = local._lambda_alarm_fns
+
+  alarm_name        = "${local.name_prefix}-Werr-${each.key}-errors"
+  alarm_description = "${each.value} Lambda 오류 발생 (5분 집계 ≥1)"
+  namespace         = "AWS/Lambda"
+  metric_name       = "Errors"
+  dimensions = {
+    FunctionName = each.value
+  }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
