@@ -313,3 +313,62 @@ resource "aws_lambda_permission" "emitter_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.emitter_1min.arn
 }
+
+# ────────────────────────────────────────────────────────────────────
+# Day 4: Pod Identity — EKS addon, KEDA CloudWatch IAM role, association
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_eks_addon" "pod_identity_agent" {
+  count        = var.enable_pod_identity_agent_addon ? 1 : 0
+  cluster_name = data.terraform_remote_state.infra.outputs.eks_cluster_name
+  addon_name   = "eks-pod-identity-agent"
+
+  tags = {
+    Project = "curve-scaler"
+  }
+}
+
+data "aws_iam_policy_document" "keda_cloudwatch_assume" {
+  statement {
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "keda_cloudwatch" {
+  name               = "${local.name_prefix}-keda-cloudwatch"
+  assume_role_policy = data.aws_iam_policy_document.keda_cloudwatch_assume.json
+  tags               = { Project = "curve-scaler" }
+}
+
+resource "aws_iam_role_policy" "keda_cloudwatch_inline" {
+  name = "${local.name_prefix}-keda-cloudwatch-inline"
+  role = aws_iam_role.keda_cloudwatch.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "KEDACloudWatch"
+      Effect = "Allow"
+      Action = [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "keda_cloudwatch" {
+  cluster_name    = data.terraform_remote_state.infra.outputs.eks_cluster_name
+  namespace       = "keda"
+  service_account = "keda-operator"
+  role_arn        = aws_iam_role.keda_cloudwatch.arn
+
+  tags = {
+    Project = "curve-scaler"
+  }
+}
