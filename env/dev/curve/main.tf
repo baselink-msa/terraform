@@ -33,12 +33,14 @@ data "terraform_remote_state" "infra" {
 
 resource "aws_security_group" "curve_db" {
   name        = "curve-db"
-  description = "PostgreSQL access for agh-curve-db"
+  description = "PostgreSQL 5432 from EKS cluster SG -- curve-scaler only"
   vpc_id      = data.terraform_remote_state.infra.outputs.vpc_id
 
   tags = {
     Name    = "curve-db"
     Project = "curve-scaler"
+    Owner   = "dmn123"
+    Service = "curve-scaler"
   }
 }
 
@@ -71,6 +73,8 @@ module "curve_db" {
 
   tags = {
     Project = "curve-scaler"
+    Owner   = "dmn123"
+    Service = "curve-scaler"
   }
 }
 
