@@ -37,3 +37,26 @@ variable "keda_predictive_paused" {
   default     = false
 }
 
+variable "keda_postgres_connection" {
+  description = <<-EOT
+    PostgreSQL connection string used by KEDA postgresql triggers.
+    Use a read-only database role such as keda_reader.
+
+    Example:
+    postgresql://keda_reader:<password>@<rds-endpoint>/baseball_platform?sslmode=require
+
+    Keep the real value out of Git by setting it in ignored terraform.tfvars or
+    with TF_VAR_keda_postgres_connection.
+
+    If null, Terraform falls back to the RDS master user from Secrets Manager.
+  EOT
+  type        = string
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition     = var.keda_postgres_connection == null || startswith(var.keda_postgres_connection, "postgresql://")
+    error_message = "keda_postgres_connection must start with postgresql:// when set."
+  }
+}
+
