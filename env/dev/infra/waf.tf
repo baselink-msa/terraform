@@ -89,6 +89,8 @@ resource "aws_wafv2_web_acl" "cloudfront" {
       managed_rule_group_statement {
         name        = "AWSManagedRulesAntiDDoSRuleSet"
         vendor_name = "AWS"
+
+        managed_rule_group_configs {}
       }
     }
 
