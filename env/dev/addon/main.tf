@@ -54,6 +54,11 @@ data "aws_secretsmanager_secret_version" "rds" {
 
 locals {
   rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
+
+  keda_postgres_connection = coalesce(
+    var.keda_postgres_connection,
+    "postgresql://${urlencode(local.rds_creds["username"])}:${urlencode(local.rds_creds["password"])}@${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform?sslmode=require"
+  )
 }
 
 resource "random_password" "jwt_secret" {
@@ -136,7 +141,7 @@ resource "kubectl_manifest" "postgres_keda_secret" {
     }
     type = "Opaque"
     stringData = {
-      connection = "postgresql://${urlencode(local.rds_creds["username"])}:${urlencode(local.rds_creds["password"])}@${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform?sslmode=require"
+      connection = local.keda_postgres_connection
     }
   })
 
