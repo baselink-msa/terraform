@@ -38,7 +38,7 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     priority = 0
 
     override_action {
-      count {}
+      none {}
     }
 
     statement {
@@ -104,7 +104,7 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     priority = 3
 
     override_action {
-      count {}
+      none {}
     }
 
     statement {
@@ -224,7 +224,7 @@ resource "aws_wafv2_web_acl" "api_alb" {
     priority = 0
 
     override_action {
-      count {}
+      none {}
     }
 
     statement {
@@ -246,7 +246,7 @@ resource "aws_wafv2_web_acl" "api_alb" {
     priority = 1
 
     override_action {
-      count {}
+      none {}
     }
 
     statement {
