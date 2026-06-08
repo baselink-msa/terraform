@@ -58,7 +58,7 @@ resource "aws_elasticache_subnet_group" "this" {
 #    maxmemory-policy: 메모리가 꽉 찼을 때의 동작 (락 데이터 보호 고려)
 #------------------------------------------------------------------------------
 resource "aws_elasticache_parameter_group" "this" {
-  name        = "${var.name}-redis"
+  name        = "${var.name}-${var.parameter_group_family}-redis"
   family      = var.parameter_group_family
   description = "Parameter group for ${var.name} Redis"
 
@@ -76,6 +76,10 @@ resource "aws_elasticache_parameter_group" "this" {
   }
 
   tags = var.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 ###############################################################################
