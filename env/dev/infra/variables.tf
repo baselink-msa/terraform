@@ -123,3 +123,21 @@ variable "slack_channel_id" {
   type        = string
   default     = "C0B80N6DAJX"
 }
+
+variable "waf_log_retention_days" {
+  description = "Retention period in days for AWS WAF CloudWatch log groups."
+  type        = number
+  default     = 14
+}
+
+variable "waf_rate_limit" {
+  description = "Maximum requests per 5-minute window per source IP before WAF rate rules match."
+  type        = number
+  default     = 1000
+}
+
+variable "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID that infra-up.sh associates with the CloudFront WAF web ACL."
+  type        = string
+  default     = "E1L0BJIJOTT0R6"
+}
