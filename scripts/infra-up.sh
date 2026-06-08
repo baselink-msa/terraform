@@ -137,7 +137,9 @@ fi
 # 5.1. API ALB 직접 접근 차단 annotation 적용
 ###############################################################################
 log "    API ALB 직접 접근 차단 annotation 적용 중..."
-CF_DIST_ID="E1L0BJIJOTT0R6"
+CF_DIST_ID=$(cd "$ENV_DIR/infra" && terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "E1L0BJIJOTT0R6")
+CF_WAF_ARN=$(cd "$ENV_DIR/infra" && terraform output -raw cloudfront_waf_web_acl_arn 2>/dev/null || echo "")
+API_ALB_WAF_ARN=$(cd "$ENV_DIR/infra" && terraform output -raw api_alb_waf_web_acl_arn 2>/dev/null || echo "")
 ORIGIN_HEADER_NAME="${CF_ORIGIN_VERIFY_HEADER_NAME:-X-Origin-Verify}"
 ORIGIN_HEADER_VALUE="${CF_ORIGIN_VERIFY_HEADER_VALUE:-}"
 
@@ -154,6 +156,15 @@ if [ -n "$CF_PREFIX_LIST_ID" ] && [ "$CF_PREFIX_LIST_ID" != "None" ]; then
   log "    ALB ingress source를 CloudFront managed prefix list로 제한: $CF_PREFIX_LIST_ID"
 else
   warn "CloudFront managed prefix list ID를 못 읽었습니다. ALB SG 제한 annotation을 건너뜁니다."
+fi
+
+if [ -n "$API_ALB_WAF_ARN" ]; then
+  kubectl annotate ingress baselink-api -n baselink-dev \
+    "alb.ingress.kubernetes.io/wafv2-acl-arn=$API_ALB_WAF_ARN" \
+    --overwrite >/dev/null
+  log "    API ALB WAF 연결 annotation 적용: $API_ALB_WAF_ARN"
+else
+  warn "API ALB WAF ARN을 못 읽었습니다. WAF annotation을 건너뜁니다."
 fi
 
 if [ -z "$ORIGIN_HEADER_VALUE" ]; then
@@ -231,11 +242,13 @@ if [ -n "$ALB_HOST" ]; then
   CF_CONFIG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json)
   ETAG=$(echo "$CF_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['ETag'])")
   
-  # ALB origin 도메인 업데이트. Origin custom header는 콘솔 설정을 보존한다.
-  UPDATED_CONFIG=$(echo "$CF_CONFIG" | ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" ORIGIN_HEADER_VALUE="$ORIGIN_HEADER_VALUE" python3 -c "
+  # ALB origin 도메인 업데이트. Origin custom header와 WAF 연결은 콘솔 설정을 보존/재적용한다.
+  UPDATED_CONFIG=$(echo "$CF_CONFIG" | ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" ORIGIN_HEADER_VALUE="$ORIGIN_HEADER_VALUE" CF_WAF_ARN="$CF_WAF_ARN" python3 -c "
 import os, sys, json
 config = json.load(sys.stdin)
 dist_config = config['DistributionConfig']
+if os.environ.get('CF_WAF_ARN'):
+    dist_config['WebACLId'] = os.environ['CF_WAF_ARN']
 for origin in dist_config['Origins']['Items']:
     if 'elb.amazonaws.com' in origin.get('DomainName', '') or origin.get('Id','') == 'api':
         origin['DomainName'] = '$ALB_HOST'
