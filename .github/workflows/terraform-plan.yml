@@ -36,7 +36,7 @@ jobs:
 
       - name: Terraform fmt
         id: fmt
-        run: terraform fmt -check -recursive
+        run: git ls-files '*.tf' | xargs terraform fmt -check
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
