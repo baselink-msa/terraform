@@ -21,6 +21,7 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   TF_IN_AUTOMATION: "true"
+  TF_VAR_cloudfront_origin_verify_header_value: ${{ secrets.CF_ORIGIN_VERIFY_HEADER_VALUE }}
 
 jobs:
   plan:
@@ -59,10 +60,12 @@ jobs:
           DEV_INFRA_TFVARS: ${{ secrets.DEV_INFRA_TFVARS }}
           DEV_ECR_TFVARS: ${{ secrets.DEV_ECR_TFVARS }}
           DEV_ADDON_TFVARS: ${{ secrets.DEV_ADDON_TFVARS }}
+          DEV_CLOUDFRONT_TFVARS: ${{ secrets.DEV_CLOUDFRONT_TFVARS }}
         run: |
           printf '%s' "$DEV_INFRA_TFVARS" > env/dev/infra/terraform.tfvars
           printf '%s' "$DEV_ECR_TFVARS" > env/dev/ecr/terraform.tfvars
           printf '%s' "$DEV_ADDON_TFVARS" > env/dev/addon/terraform.tfvars
+          printf '%s' "$DEV_CLOUDFRONT_TFVARS" > env/dev/cloudfront/terraform.tfvars
 
       - name: Terraform plan
         id: plan
@@ -74,7 +77,7 @@ jobs:
           mkdir -p /tmp/tf-plan-results
           : > /tmp/tf-plan-results/comment.md
 
-          for root in env/dev/infra env/dev/ecr env/dev/addon; do
+          for root in env/dev/infra env/dev/ecr env/dev/addon env/dev/cloudfront; do
             safe_root="${root//\//-}"
             {
               echo "## ${root}"

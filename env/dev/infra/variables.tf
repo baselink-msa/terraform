@@ -137,9 +137,15 @@ variable "waf_rate_limit" {
 }
 
 variable "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID that infra-up.sh associates with the CloudFront WAF web ACL."
+  description = "CloudFront distribution ID managed by the dev cloudfront layer."
   type        = string
   default     = "E1L0BJIJOTT0R6"
+}
+
+variable "cloudfront_distribution_domain_name" {
+  description = "CloudFront distribution domain name used by Lambda GAME_API_URL. post-apply-dev.sh refreshes this after the cloudfront layer apply."
+  type        = string
+  default     = "d1z20dvak4bl13.cloudfront.net"
 }
 
 variable "github_actions_runner_instance_type" {
