@@ -137,3 +137,8 @@ output "cloudfront_distribution_id" {
   description = "CloudFront distribution ID associated by infra-up.sh."
   value       = var.cloudfront_distribution_id
 }
+
+output "github_actions_terraform_role_arn" {
+  description = "IAM role ARN used by GitHub Actions Terraform workflows."
+  value       = aws_iam_role.github_actions_terraform.arn
+}
