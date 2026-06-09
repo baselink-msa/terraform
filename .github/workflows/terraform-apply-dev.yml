@@ -27,6 +27,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.9
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
