@@ -141,3 +141,9 @@ variable "cloudfront_distribution_id" {
   type        = string
   default     = "E1L0BJIJOTT0R6"
 }
+
+variable "github_actions_runner_instance_type" {
+  description = "EC2 instance type for the dev GitHub Actions self-hosted runner."
+  type        = string
+  default     = "t3.small"
+}

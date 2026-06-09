@@ -18,7 +18,7 @@ env:
 jobs:
   apply:
     name: Apply dev infrastructure
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, baselink-dev, iac]
     environment: dev
 
     steps:

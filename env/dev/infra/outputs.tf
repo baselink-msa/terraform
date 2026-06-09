@@ -142,3 +142,18 @@ output "github_actions_terraform_role_arn" {
   description = "IAM role ARN used by GitHub Actions Terraform workflows."
   value       = aws_iam_role.github_actions_terraform.arn
 }
+
+output "github_actions_runner_instance_id" {
+  description = "EC2 instance ID for the dev GitHub Actions self-hosted runner."
+  value       = aws_instance.github_actions_runner.id
+}
+
+output "github_actions_runner_private_ip" {
+  description = "Private IP address of the dev GitHub Actions self-hosted runner."
+  value       = aws_instance.github_actions_runner.private_ip
+}
+
+output "github_actions_runner_role_arn" {
+  description = "IAM role ARN attached to the dev GitHub Actions self-hosted runner EC2 instance."
+  value       = aws_iam_role.github_actions_runner.arn
+}
