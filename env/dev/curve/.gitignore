@@ -1,0 +1,3 @@
+*.tfplan
+plan-*.txt
+.terraform/
