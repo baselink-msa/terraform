@@ -221,3 +221,96 @@ aws sqs delete-message `
 - AWS CLI `start-message-move-task`: https://docs.aws.amazon.com/cli/latest/reference/sqs/start-message-move-task.html
 - AWS CLI `list-message-move-tasks`: https://docs.aws.amazon.com/cli/latest/reference/sqs/list-message-move-tasks.html
 - AWS SQS DLQ Redrive: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html
+
+## KEDA SQS scaler IAM 권한
+
+KEDA의 `aws-sqs-queue` scaler는 `ticket-confirm-queue`의 메시지 개수를 읽어서 `ticket-worker-service` 파드 수를 조절합니다.
+
+이때 KEDA가 사용하는 IAM Role에는 최소한 다음 권한이 필요합니다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TicketConfirmQueueReadForKEDA",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:ap-northeast-2:740831361032:ticket-confirm-queue"
+    }
+  ]
+}
+```
+
+권한이 없으면 `ticket-worker-scaler`가 다음과 같은 상태가 됩니다.
+
+```text
+READY=False
+Reason=TriggerError
+AccessDenied: not authorized to perform: sqs:GetQueueAttributes
+```
+
+정상 상태는 다음과 같습니다.
+
+```powershell
+kubectl get scaledobject ticket-worker-scaler -n baselink-dev
+kubectl get hpa keda-hpa-ticket-worker-scaler -n baselink-dev
+```
+
+예상 결과:
+
+```text
+ticket-worker-scaler READY=True
+keda-hpa-ticket-worker-scaler TARGETS=0/5 (avg)
+```
+
+### curve-keda-cloudwatch Role과 Pod Identity
+
+현재 dev 환경에서는 KEDA operator가 EKS Pod Identity Association을 통해 `curve-keda-cloudwatch` IAM Role을 사용합니다.
+
+이 Role은 KEDA가 CloudWatch metric을 조회하기 위해 별도 Terraform 코드에서 관리되는 리소스입니다. `ticket-worker-scaler`도 같은 KEDA operator를 통해 SQS 큐 길이를 읽기 때문에, 해당 Role에는 CloudWatch 조회 권한뿐 아니라 SQS 큐 조회 권한도 함께 필요합니다.
+
+확인 명령:
+
+```powershell
+aws eks list-pod-identity-associations `
+  --cluster-name baselink-dev
+
+aws eks describe-pod-identity-association `
+  --cluster-name baselink-dev `
+  --association-id "<association-id>"
+```
+
+이 association이 다음 대상을 연결합니다.
+
+```text
+cluster: baselink-dev
+namespace: keda
+serviceAccount: keda-operator
+roleArn: arn:aws:iam::740831361032:role/curve-keda-cloudwatch
+```
+
+따라서 KEDA SQS scaler 권한은 실제로 KEDA가 사용하는 Role인 `curve-keda-cloudwatch`에 있어야 합니다.
+
+주의할 점:
+
+- ServiceAccount에 IRSA annotation이 있더라도, EKS Pod Identity Association이 있으면 KEDA의 AWS 요청은 Pod Identity Role을 사용할 수 있습니다.
+- Terraform의 다른 Role에 SQS 권한이 있어도, 실제 KEDA가 그 Role을 쓰지 않으면 scaler 오류는 해결되지 않습니다.
+- `curve-keda-cloudwatch` Role과 Pod Identity Association을 누가 관리하는지 팀 내에서 정해야 합니다.
+
+권장 관리 방식:
+
+1. `curve-keda-cloudwatch` Role과 EKS Pod Identity Association을 소유한 Terraform 코드에서 관리합니다.
+2. CloudWatch 권한과 SQS 읽기 권한을 같은 IaC 코드에서 관리합니다.
+3. Terraform 편입 전까지는 이 README를 기준으로 수동 권한을 점검합니다.
+
+현재 수동으로 추가한 권한 확인:
+
+```powershell
+aws iam get-role-policy `
+  --role-name curve-keda-cloudwatch `
+  --policy-name curve-keda-sqs-read
+```
