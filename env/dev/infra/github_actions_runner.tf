@@ -62,6 +62,15 @@ resource "aws_vpc_security_group_egress_rule" "github_actions_runner_all" {
   description       = "Outbound access for GitHub, AWS APIs, package repositories, and EKS API"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "eks_api_from_github_actions_runner" {
+  security_group_id            = module.eks.cluster_security_group_id
+  referenced_security_group_id = aws_security_group.github_actions_runner.id
+  from_port                    = 443
+  to_port                      = 443
+  ip_protocol                  = "tcp"
+  description                  = "EKS API access from GitHub Actions self-hosted runner"
+}
+
 resource "aws_instance" "github_actions_runner" {
   ami                         = data.aws_ami.github_actions_runner.id
   instance_type               = var.github_actions_runner_instance_type
