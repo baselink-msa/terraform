@@ -15,6 +15,10 @@ resource "aws_db_instance" "this" {
   vpc_security_group_ids = var.vpc_security_group_ids
   db_subnet_group_name   = var.db_subnet_group_name
 
+  backup_retention_period = var.backup_retention_period
+  backup_window           = var.backup_window
+  copy_tags_to_snapshot   = var.copy_tags_to_snapshot
+
   skip_final_snapshot = var.skip_final_snapshot
   publicly_accessible = var.publicly_accessible
 
