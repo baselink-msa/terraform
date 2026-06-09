@@ -255,3 +255,94 @@ output "backend_runtime_irsa_role_arn" {
   description = "IAM role ARN used by the backend-runtime Kubernetes service account."
   value       = aws_iam_role.backend_runtime_irsa.arn
 }
+
+# --- 람다 및 베드락 설정 시작 ---
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../src/lambda_function.py"
+  output_path = "${path.module}/lambda_function.zip"
+}
+
+resource "aws_iam_role" "lambda_role" {
+  name = "baselink_lambda_execution_role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_lambda_function" "bedrock_action_lambda" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = "baselink-game-schedule-action"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 10
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      GAME_API_URL = "https://d1z20dvak4bl13.cloudfront.net/api/games"
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_bedrock_invoke" {
+  statement_id  = "AllowBedrockInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.bedrock_action_lambda.function_name
+  principal     = "bedrock.amazonaws.com"
+}
+
+resource "aws_bedrockagent_agent_action_group" "game_score_action_group" {
+  action_group_name          = "GameScoreActionGroup"
+  agent_id                   = "PZBTYB3SFA"
+  agent_version              = "DRAFT"
+  description                = "야구 경기 일정 및 스코어 조회를 위한 액션 그룹"
+  skip_resource_in_use_check = true
+
+  action_group_executor {
+    lambda = aws_lambda_function.bedrock_action_lambda.arn
+  }
+
+  api_schema {
+    payload = jsonencode({
+      openapi = "3.0.0"
+      info = { title = "Baseball DB API", version = "1.0.0" }
+      paths = {
+        "/get-game-schedule" = {
+          get = {
+            summary     = "경기 일정 및 스코어 조회"
+            description = "사용자의 질문에서 시간 키워드를 추출하여 timeframe 파라미터로 넘깁니다."
+            operationId = "getGameSchedule"
+            parameters = [
+              {
+                name        = "timeframe"
+                in          = "query"
+                description = "다음 키워드 중 하나만 정확히 입력하세요: '오늘', '내일', '이번주', '이번주_지난경기', '다음주', '전체'. 만약 특정 날짜면 'YYYY-MM-DD' 형식으로 입력하세요."
+                required    = true
+                schema      = { type = "string" }
+              }
+            ]
+            responses = {
+              "200" = {
+                description = "성공"
+                content = { "application/json" = { schema = { type = "object", properties = { result = { type = "string" } } } } }
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+}
+# --- 람다 및 베드락 설정 끝 ---
