@@ -89,7 +89,7 @@ set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y ca-certificates curl unzip tar git jq gnupg lsb-release software-properties-common
+apt-get install -y ca-certificates curl unzip tar git jq gnupg lsb-release software-properties-common nodejs npm
 
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp-archive-keyring.gpg
