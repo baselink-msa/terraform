@@ -177,10 +177,21 @@ if [ -n "$ALB_HOST" ]; then
     export TF_VAR_cloudfront_origin_verify_header_value="$ORIGIN_HEADER_VALUE"
 
     (
-      cd "$ENV_DIR/infra"
+      cd "$ENV_DIR/cloudfront"
       terraform init -input=false -no-color > /dev/null 2>&1
       terraform apply -auto-approve -input=false
     )
+    CF_DOMAIN=$(cd "$ENV_DIR/cloudfront" && terraform output -raw cloudfront_distribution_domain_name 2>/dev/null || echo "")
+    if [ -n "$CF_DOMAIN" ]; then
+      (
+        cd "$ENV_DIR/infra"
+        terraform init -input=false -no-color > /dev/null 2>&1
+        TF_VAR_cloudfront_distribution_domain_name="$CF_DOMAIN" terraform apply -auto-approve -input=false
+      )
+      log "Lambda GAME_API_URL CloudFront domain 반영 완료: $CF_DOMAIN"
+    else
+      warn "CloudFront domain output을 못 읽었습니다. Lambda GAME_API_URL 재반영을 건너뜁니다."
+    fi
     log "CloudFront origin Terraform 반영 완료: $ALB_HOST"
   else
     warn "CloudFront origin custom header 값을 못 읽었습니다. Terraform CloudFront 반영을 건너뜁니다."

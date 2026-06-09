@@ -54,10 +54,12 @@ jobs:
           DEV_INFRA_TFVARS: ${{ secrets.DEV_INFRA_TFVARS }}
           DEV_ECR_TFVARS: ${{ secrets.DEV_ECR_TFVARS }}
           DEV_ADDON_TFVARS: ${{ secrets.DEV_ADDON_TFVARS }}
+          DEV_CLOUDFRONT_TFVARS: ${{ secrets.DEV_CLOUDFRONT_TFVARS }}
         run: |
           printf '%s' "$DEV_INFRA_TFVARS" > env/dev/infra/terraform.tfvars
           printf '%s' "$DEV_ECR_TFVARS" > env/dev/ecr/terraform.tfvars
           printf '%s' "$DEV_ADDON_TFVARS" > env/dev/addon/terraform.tfvars
+          printf '%s' "$DEV_CLOUDFRONT_TFVARS" > env/dev/cloudfront/terraform.tfvars
 
       - name: Terraform apply infra
         working-directory: env/dev/infra

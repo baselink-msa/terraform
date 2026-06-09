@@ -291,7 +291,7 @@ resource "aws_lambda_function" "bedrock_action_lambda" {
 
   environment {
     variables = {
-      GAME_API_URL = "https://${module.cloudfront.distribution_domain_name}/api/games"
+      GAME_API_URL = "https://${var.cloudfront_distribution_domain_name}/api/games"
     }
   }
 }

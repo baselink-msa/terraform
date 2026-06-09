@@ -134,13 +134,13 @@ output "api_alb_waf_web_acl_arn" {
 }
 
 output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID managed by Terraform import."
-  value       = module.cloudfront.distribution_id
+  description = "CloudFront distribution ID managed by the dev cloudfront layer."
+  value       = var.cloudfront_distribution_id
 }
 
 output "cloudfront_distribution_domain_name" {
   description = "CloudFront distribution domain name used by Lambda GAME_API_URL."
-  value       = module.cloudfront.distribution_domain_name
+  value       = var.cloudfront_distribution_domain_name
 }
 
 output "github_actions_terraform_role_arn" {

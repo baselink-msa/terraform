@@ -1,3 +1,12 @@
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}
+
 import {
   to = module.cloudfront.aws_cloudfront_distribution.frontend
   id = var.cloudfront_distribution_id
@@ -32,6 +41,6 @@ module "cloudfront" {
   frontend_cache_policy_id     = var.cloudfront_frontend_cache_policy_id
   api_cache_policy_id          = var.cloudfront_api_cache_policy_id
   api_origin_request_policy_id = var.cloudfront_api_origin_request_policy_id
-  web_acl_arn                  = aws_wafv2_web_acl.cloudfront.arn
+  web_acl_arn                  = data.terraform_remote_state.infra.outputs.cloudfront_waf_web_acl_arn
   tags                         = local.common_tags
 }
