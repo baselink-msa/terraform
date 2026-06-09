@@ -1,5 +1,70 @@
 # elasticache 모듈
 
+## dev Valkey 전환 결과
+
+dev 환경의 ElastiCache는 Redis 호환 엔진인 Valkey 8.2로 전환되었습니다.
+
+현재 확인된 상태는 다음과 같습니다.
+
+```text
+ReplicationGroup: baselink-dev-redis
+Status: available
+Engine: valkey
+MultiAZ: enabled
+AutomaticFailover: enabled
+```
+
+노드 구성:
+
+```text
+baselink-dev-redis-001
+- Engine: valkey
+- EngineVersion: 8.2.0
+- Role: primary
+- AZ: ap-northeast-2c
+- ParameterGroup: baselink-dev-valkey8-redis
+
+baselink-dev-redis-002
+- Engine: valkey
+- EngineVersion: 8.2.0
+- Role: replica
+- AZ: ap-northeast-2a
+- ParameterGroup: baselink-dev-valkey8-redis
+```
+
+확인 명령:
+
+```powershell
+aws elasticache describe-replication-groups `
+  --replication-group-id baselink-dev-redis `
+  --query "ReplicationGroups[0].{Id:ReplicationGroupId,Status:Status,Engine:Engine,MultiAZ:MultiAZ,AutomaticFailover:AutomaticFailover}"
+
+aws elasticache describe-cache-clusters `
+  --cache-cluster-id baselink-dev-redis-001 `
+  --show-cache-node-info `
+  --query "CacheClusters[0].{Id:CacheClusterId,Engine:Engine,EngineVersion:EngineVersion,Status:CacheClusterStatus,ParameterGroup:CacheParameterGroup.CacheParameterGroupName}"
+```
+
+## 운영 관점
+
+Valkey는 Redis OSS와 호환되는 인메모리 캐시 엔진입니다.
+
+이 프로젝트에서는 애플리케이션 코드 변경 없이 기존 Redis 접속 방식 그대로 사용합니다.
+
+현재 `transit_encryption_enabled = false`이므로 애플리케이션은 기존과 같이 `redis://host:6379` 방식으로 접속합니다. 향후 TLS를 켜면 클라이언트 설정도 TLS 접속 방식으로 함께 바꿔야 합니다.
+
+Multi-AZ와 automatic failover를 켜 두었기 때문에 primary 노드 장애 시 replica가 primary로 승격될 수 있습니다. 이 과정에서 짧은 연결 끊김이 발생할 수 있으므로 애플리케이션은 Redis 재연결을 허용해야 합니다.
+
+dev 환경은 비용 절감을 위해 `snapshot_retention_limit = 0`으로 설정되어 있습니다. 운영 환경에서는 캐시 데이터의 중요도에 따라 snapshot 보존을 켜는 것을 검토합니다.
+
+## 발표 포인트
+
+- Redis 호환 엔진인 Valkey 8.2로 전환해 최신 오픈소스 캐시 엔진 기반으로 구성했습니다.
+- primary 1대와 replica 1대를 서로 다른 AZ에 배치해 단일 노드 장애에 대비했습니다.
+- automatic failover를 활성화해 primary 장애 시 replica가 자동 승격될 수 있도록 구성했습니다.
+- 대기열, 좌석 잠금처럼 빠른 응답과 동시성 제어가 필요한 기능을 RDS가 아닌 인메모리 캐시 계층에서 처리하도록 분리했습니다.
+- Terraform으로 엔진, 버전, parameter group, Multi-AZ 설정을 관리해 재현 가능한 인프라 구성을 만들었습니다.
+
 ElastiCache for Redis 복제 그룹을 프로비저닝하는 모듈입니다 (cluster mode disabled).
 
 ## 개요
