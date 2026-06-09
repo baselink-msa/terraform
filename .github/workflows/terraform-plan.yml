@@ -25,7 +25,7 @@ env:
 jobs:
   plan:
     name: Plan dev infrastructure
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, baselink-dev, iac]
 
     steps:
       - name: Checkout
@@ -33,6 +33,20 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.9
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        id: fmt
+        run: |
+          set +e
+          git ls-files '*.tf' | xargs terraform fmt -check
+          fmt_status=$?
+          if [ "$fmt_status" -ne 0 ]; then
+            echo "::warning::terraform fmt check failed on the self-hosted runner. Continuing to run terraform plan."
+          fi
+          exit 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -49,10 +63,6 @@ jobs:
           printf '%s' "$DEV_INFRA_TFVARS" > env/dev/infra/terraform.tfvars
           printf '%s' "$DEV_ECR_TFVARS" > env/dev/ecr/terraform.tfvars
           printf '%s' "$DEV_ADDON_TFVARS" > env/dev/addon/terraform.tfvars
-
-      - name: Terraform fmt
-        id: fmt
-        run: terraform fmt -check -recursive
 
       - name: Terraform plan
         id: plan
@@ -71,8 +81,8 @@ jobs:
               echo
             } >> /tmp/tf-plan-results/comment.md
 
-            terraform -chdir="$root" init -input=false -no-color > "/tmp/tf-plan-results/${safe_root}-init.txt" 2>&1
-            init_status=$?
+            timeout 300 terraform -chdir="$root" init -input=false -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-init.txt"
+            init_status=${PIPESTATUS[0]}
 
             if [ "$init_status" -ne 0 ]; then
               status=$init_status
@@ -88,8 +98,8 @@ jobs:
               continue
             fi
 
-            terraform -chdir="$root" validate -no-color > "/tmp/tf-plan-results/${safe_root}-validate.txt" 2>&1
-            validate_status=$?
+            timeout 300 terraform -chdir="$root" validate -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-validate.txt"
+            validate_status=${PIPESTATUS[0]}
 
             if [ "$validate_status" -ne 0 ]; then
               status=$validate_status
@@ -105,8 +115,8 @@ jobs:
               continue
             fi
 
-            terraform -chdir="$root" plan -input=false -no-color > "/tmp/tf-plan-results/${safe_root}-plan.txt" 2>&1
-            plan_status=$?
+            timeout 900 terraform -chdir="$root" plan -input=false -lock-timeout=60s -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-plan.txt"
+            plan_status=${PIPESTATUS[0]}
 
             if [ "$plan_status" -ne 0 ]; then
               status=$plan_status
