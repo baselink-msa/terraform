@@ -86,15 +86,18 @@ resource "aws_vpc_security_group_egress_rule" "rds_all" {
 module "rds" {
   source = "../../../modules/rds"
 
-  identifier             = "${local.name_prefix}-postgres"
-  db_name                = "baseball_platform"
-  username               = "baseball"
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.rds.name
-  publicly_accessible    = false
-  multi_az               = true
-  skip_final_snapshot    = true
-  tags                   = local.common_tags
+  identifier              = "${local.name_prefix}-postgres"
+  db_name                 = "baseball_platform"
+  username                = "baseball"
+  vpc_security_group_ids  = [aws_security_group.rds.id]
+  db_subnet_group_name    = aws_db_subnet_group.rds.name
+  publicly_accessible     = false
+  multi_az                = true
+  backup_retention_period = 7
+  backup_window           = "18:00-18:30"
+  copy_tags_to_snapshot   = true
+  skip_final_snapshot     = true
+  tags                    = local.common_tags
 }
 
 module "elasticache" {

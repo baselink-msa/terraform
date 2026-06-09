@@ -62,6 +62,29 @@ variable "db_subnet_group_name" {
   type        = string
 }
 
+variable "backup_retention_period" {
+  description = "Number of days to retain automated backups. Set to 0 to disable automated backups and PITR."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.backup_retention_period >= 0 && var.backup_retention_period <= 35
+    error_message = "backup_retention_period must be between 0 and 35 days."
+  }
+}
+
+variable "backup_window" {
+  description = "Daily UTC time range during which automated backups are created, for example 18:00-18:30."
+  type        = string
+  default     = null
+}
+
+variable "copy_tags_to_snapshot" {
+  description = "Whether to copy DB instance tags to snapshots."
+  type        = bool
+  default     = false
+}
+
 variable "skip_final_snapshot" {
   description = "Whether to skip final snapshot on destroy."
   type        = bool
