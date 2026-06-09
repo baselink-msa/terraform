@@ -4,6 +4,7 @@ variable "aws_region" {
   default     = "ap-northeast-2"
 }
 
+# PR plan workflow smoke-test target. Safe to remove after verification.
 variable "project_name" {
   description = "Project name used for resource naming and tags."
   type        = string
