@@ -4,6 +4,7 @@ variable "aws_region" {
   default     = "ap-northeast-2"
 }
 
+# Self-hosted runner plan smoke test.
 variable "project_name" {
   description = "Project name used for resource naming and tags."
   type        = string
