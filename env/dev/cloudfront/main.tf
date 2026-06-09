@@ -7,26 +7,6 @@ locals {
   }
 }
 
-import {
-  to = module.cloudfront.aws_cloudfront_distribution.frontend
-  id = var.cloudfront_distribution_id
-}
-
-import {
-  to = module.cloudfront.aws_s3_bucket.frontend
-  id = var.cloudfront_frontend_bucket_name
-}
-
-import {
-  to = module.cloudfront.aws_s3_bucket_public_access_block.frontend
-  id = var.cloudfront_frontend_bucket_name
-}
-
-import {
-  to = module.cloudfront.aws_cloudfront_origin_access_control.frontend_s3
-  id = var.cloudfront_frontend_oac_id
-}
-
 module "cloudfront" {
   source = "../../../modules/cloudfront"
 
