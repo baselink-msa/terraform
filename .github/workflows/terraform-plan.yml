@@ -34,6 +34,10 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Terraform fmt
+        id: fmt
+        run: terraform fmt -check -recursive
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -49,10 +53,6 @@ jobs:
           printf '%s' "$DEV_INFRA_TFVARS" > env/dev/infra/terraform.tfvars
           printf '%s' "$DEV_ECR_TFVARS" > env/dev/ecr/terraform.tfvars
           printf '%s' "$DEV_ADDON_TFVARS" > env/dev/addon/terraform.tfvars
-
-      - name: Terraform fmt
-        id: fmt
-        run: terraform fmt -check -recursive
 
       - name: Terraform plan
         id: plan
