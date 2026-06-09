@@ -22,6 +22,7 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   TF_IN_AUTOMATION: "true"
+  TF_VAR_cloudfront_origin_verify_header_value: ${{ secrets.CF_ORIGIN_VERIFY_HEADER_VALUE }}
 
 jobs:
   apply:

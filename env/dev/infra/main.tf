@@ -268,8 +268,8 @@ resource "aws_iam_role" "lambda_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "lambda.amazonaws.com" }
     }]
   })
@@ -291,7 +291,7 @@ resource "aws_lambda_function" "bedrock_action_lambda" {
 
   environment {
     variables = {
-      GAME_API_URL = "https://d1z20dvak4bl13.cloudfront.net/api/games"
+      GAME_API_URL = "https://${aws_cloudfront_distribution.frontend.domain_name}/api/games"
     }
   }
 }
@@ -317,7 +317,7 @@ resource "aws_bedrockagent_agent_action_group" "game_score_action_group" {
   api_schema {
     payload = jsonencode({
       openapi = "3.0.0"
-      info = { title = "Baseball DB API", version = "1.0.0" }
+      info    = { title = "Baseball DB API", version = "1.0.0" }
       paths = {
         "/get-game-schedule" = {
           get = {
@@ -336,7 +336,7 @@ resource "aws_bedrockagent_agent_action_group" "game_score_action_group" {
             responses = {
               "200" = {
                 description = "성공"
-                content = { "application/json" = { schema = { type = "object", properties = { result = { type = "string" } } } } }
+                content     = { "application/json" = { schema = { type = "object", properties = { result = { type = "string" } } } } }
               }
             }
           }

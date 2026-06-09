@@ -36,6 +36,7 @@ elapsed() {
 
 TOTAL_START=$(date +%s)
 REGION="ap-northeast-2"
+CF_DIST_ID="${TF_VAR_cloudfront_distribution_id:-E1L0BJIJOTT0R6}"
 
 ###############################################################################
 # 0. AWS 인증 확인
@@ -43,6 +44,46 @@ REGION="ap-northeast-2"
 log "    AWS 인증 확인 중..."
 if ! aws sts get-caller-identity --region "$REGION" >/dev/null 2>&1; then
   err "AWS 인증을 찾을 수 없습니다. aws configure, aws sso login, 또는 AWS_PROFILE 환경변수를 설정한 뒤 다시 실행하세요."
+fi
+
+###############################################################################
+# 0.5. CloudFront import/apply용 현재 origin 설정 읽기
+###############################################################################
+log "    CloudFront 현재 origin 설정 확인 중..."
+CF_CONFIG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json 2>/dev/null || echo "")
+if [ -n "$CF_CONFIG" ]; then
+  if [ -z "${TF_VAR_cloudfront_origin_verify_header_value:-}" ]; then
+    export TF_VAR_cloudfront_origin_verify_header_value=$(echo "$CF_CONFIG" | python3 -c "
+import json, sys
+config = json.load(sys.stdin)['DistributionConfig']
+for origin in config.get('Origins', {}).get('Items', []):
+    if 'elb.amazonaws.com' not in origin.get('DomainName', '') and origin.get('Id', '') != 'baselink-dev-api-alb':
+        continue
+    for header in origin.get('CustomHeaders', {}).get('Items', []):
+        if header.get('HeaderName', '').lower() == 'x-origin-verify':
+            print(header.get('HeaderValue', ''))
+            raise SystemExit
+print('')
+")
+  fi
+
+  if [ -z "${TF_VAR_cloudfront_api_origin_domain_name:-}" ]; then
+    export TF_VAR_cloudfront_api_origin_domain_name=$(echo "$CF_CONFIG" | python3 -c "
+import json, sys
+config = json.load(sys.stdin)['DistributionConfig']
+for origin in config.get('Origins', {}).get('Items', []):
+    if 'elb.amazonaws.com' in origin.get('DomainName', '') or origin.get('Id', '') == 'baselink-dev-api-alb':
+        print(origin.get('DomainName', ''))
+        raise SystemExit
+print('')
+")
+  fi
+else
+  warn "CloudFront 현재 설정을 읽지 못했습니다. TF_VAR_cloudfront_origin_verify_header_value가 필요할 수 있습니다."
+fi
+
+if [ -z "${TF_VAR_cloudfront_origin_verify_header_value:-}" ]; then
+  err "CloudFront origin custom header 값을 찾지 못했습니다. CF_ORIGIN_VERIFY_HEADER_VALUE 또는 TF_VAR_cloudfront_origin_verify_header_value를 설정하세요."
 fi
 
 ###############################################################################

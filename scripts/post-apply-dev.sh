@@ -162,7 +162,7 @@ else
 fi
 set -e
 
-log "CloudFront origin 업데이트 중..."
+log "CloudFront origin Terraform 반영 중..."
 ALB_HOST=""
 for i in $(seq 1 18); do
   ALB_HOST=$(kubectl get ingress baselink-api -n baselink-dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
@@ -171,40 +171,20 @@ for i in $(seq 1 18); do
 done
 
 if [ -n "$ALB_HOST" ]; then
-  CF_CONFIG=$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --output json)
-  ETAG=$(echo "$CF_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['ETag'])")
+  if [ -n "$ORIGIN_HEADER_VALUE" ]; then
+    export TF_VAR_cloudfront_api_origin_domain_name="$ALB_HOST"
+    export TF_VAR_cloudfront_origin_verify_header_name="$ORIGIN_HEADER_NAME"
+    export TF_VAR_cloudfront_origin_verify_header_value="$ORIGIN_HEADER_VALUE"
 
-  UPDATED_CONFIG=$(echo "$CF_CONFIG" | ORIGIN_HEADER_NAME="$ORIGIN_HEADER_NAME" ORIGIN_HEADER_VALUE="$ORIGIN_HEADER_VALUE" CF_WAF_ARN="$CF_WAF_ARN" ALB_HOST="$ALB_HOST" python3 -c "
-import os, sys, json
-config = json.load(sys.stdin)
-dist_config = config['DistributionConfig']
-if os.environ.get('CF_WAF_ARN'):
-    dist_config['WebACLId'] = os.environ['CF_WAF_ARN']
-for origin in dist_config['Origins']['Items']:
-    if 'elb.amazonaws.com' in origin.get('DomainName', '') or origin.get('Id','') == 'api':
-        origin['DomainName'] = os.environ['ALB_HOST']
-        if os.environ.get('ORIGIN_HEADER_VALUE'):
-            headers = origin.setdefault('CustomHeaders', {'Quantity': 0})
-            items = headers.setdefault('Items', [])
-            header_name = os.environ['ORIGIN_HEADER_NAME']
-            header_value = os.environ['ORIGIN_HEADER_VALUE']
-            for header in items:
-                if header.get('HeaderName', '').lower() == header_name.lower():
-                    header['HeaderName'] = header_name
-                    header['HeaderValue'] = header_value
-                    break
-            else:
-                items.append({'HeaderName': header_name, 'HeaderValue': header_value})
-            headers['Quantity'] = len(items)
-        break
-json.dump(dist_config, sys.stdout)
-")
-
-  TMP_CONFIG=$(mktemp)
-  echo "$UPDATED_CONFIG" > "$TMP_CONFIG"
-  aws cloudfront update-distribution --id "$CF_DIST_ID" --if-match "$ETAG" --distribution-config "file://$TMP_CONFIG" > /dev/null
-  rm -f "$TMP_CONFIG"
-  log "CloudFront origin 업데이트 완료: $ALB_HOST"
+    (
+      cd "$ENV_DIR/infra"
+      terraform init -input=false -no-color > /dev/null 2>&1
+      terraform apply -auto-approve -input=false
+    )
+    log "CloudFront origin Terraform 반영 완료: $ALB_HOST"
+  else
+    warn "CloudFront origin custom header 값을 못 읽었습니다. Terraform CloudFront 반영을 건너뜁니다."
+  fi
 else
   warn "ALB 주소를 가져올 수 없습니다. CloudFront origin을 수동으로 업데이트하세요."
 fi

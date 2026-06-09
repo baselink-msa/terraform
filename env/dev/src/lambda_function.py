@@ -58,7 +58,7 @@ def lambda_handler(event, context):
     start_date_str = start_date.strftime("%Y-%m-%d")
     end_date_str = end_date.strftime("%Y-%m-%d")
     
-    api_url = os.environ.get("GAME_API_URL", "https://d1z20dvak4bl13.cloudfront.net/api/games") 
+    api_url = os.environ["GAME_API_URL"]
     
     try:
         # DB 조회
