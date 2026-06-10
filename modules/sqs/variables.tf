@@ -97,6 +97,48 @@ variable "dead_letter_queue_alarm_ok_actions" {
   default     = []
 }
 
+variable "create_queue_backlog_alarm" {
+  description = "Whether to create a CloudWatch alarm for visible messages in the source queue."
+  type        = bool
+  default     = false
+}
+
+variable "queue_backlog_alarm_name" {
+  description = "Optional CloudWatch alarm name. Defaults to <queue_name>-messages-visible."
+  type        = string
+  default     = null
+}
+
+variable "queue_backlog_alarm_threshold" {
+  description = "Visible source queue message count that causes the alarm to enter ALARM state."
+  type        = number
+  default     = 10
+}
+
+variable "queue_backlog_alarm_period" {
+  description = "CloudWatch metric evaluation period in seconds."
+  type        = number
+  default     = 300
+}
+
+variable "queue_backlog_alarm_evaluation_periods" {
+  description = "Number of consecutive periods evaluated by the source queue backlog alarm."
+  type        = number
+  default     = 2
+}
+
+variable "queue_backlog_alarm_actions" {
+  description = "ARNs notified when the source queue backlog alarm enters ALARM state."
+  type        = list(string)
+  default     = []
+}
+
+variable "queue_backlog_alarm_ok_actions" {
+  description = "ARNs notified when the source queue backlog alarm returns to OK state."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "리소스에 부여할 태그"
   type        = map(string)

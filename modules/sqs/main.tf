@@ -57,3 +57,28 @@ resource "aws_cloudwatch_metric_alarm" "dead_letter_messages_visible" {
     Purpose = "dead-letter-queue-alarm"
   })
 }
+
+resource "aws_cloudwatch_metric_alarm" "queue_backlog_messages_visible" {
+  count = var.create_queue_backlog_alarm ? 1 : 0
+
+  alarm_name          = var.queue_backlog_alarm_name != null ? var.queue_backlog_alarm_name : "${var.queue_name}-messages-visible"
+  alarm_description   = "Detects messages waiting in the source queue for ${var.queue_name}."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = var.queue_backlog_alarm_evaluation_periods
+  threshold           = var.queue_backlog_alarm_threshold
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = var.queue_backlog_alarm_period
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.queue_backlog_alarm_actions
+  ok_actions          = var.queue_backlog_alarm_ok_actions
+
+  dimensions = {
+    QueueName = aws_sqs_queue.this.name
+  }
+
+  tags = merge(var.tags, {
+    Purpose = "source-queue-backlog-alarm"
+  })
+}
