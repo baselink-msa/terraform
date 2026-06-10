@@ -376,3 +376,180 @@ resource "aws_eks_pod_identity_association" "keda_cloudwatch" {
     Project = "curve-scaler"
   }
 }
+
+# ────────────────────────────────────────────────────────────────────
+# P6: 워치독 알람 (W4 heartbeat / W1 clamp / Werr Lambda errors) + SNS
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_sns_topic" "curve_alerts" {
+  name = "${local.name_prefix}-alerts"
+  tags = { Project = "curve-scaler" }
+}
+
+resource "aws_sns_topic_subscription" "curve_alerts_email" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.curve_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# W4: heartbeat 소실 (죽은 자는 부고를 못 보낸다 — 침묵=사망 판정)
+resource "aws_cloudwatch_metric_alarm" "w4_heartbeat_lost" {
+  alarm_name          = "${local.name_prefix}-W4-heartbeat-lost"
+  alarm_description   = "emitter 침묵 3분 — Lambda/VPC/DB 장애 가능성"
+  namespace           = "Baselink/CurveScaler"
+  metric_name         = "heartbeat"
+  statistic           = "Sum"
+  period              = 60
+  evaluation_periods  = 3
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
+
+# W1: clamp 발동 (예측값이 ceiling 에 도달)
+resource "aws_cloudwatch_metric_alarm" "w1_clamp_engaged" {
+  alarm_name        = "${local.name_prefix}-W1-clamp-engaged"
+  alarm_description = "predicted_rps ceiling(${var.ceiling_rps}) 도달 — 과대 예측 또는 계획 오염 확인"
+  namespace         = "Baselink/CurveScaler"
+  metric_name       = "clamp_engaged"
+  dimensions = {
+    service = "order"
+  }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
+
+# Werr: Lambda 오류 — writer / emitter 각각 (for_each 2개)
+locals {
+  _lambda_alarm_fns = {
+    writer  = aws_lambda_function.writer.function_name
+    emitter = aws_lambda_function.emitter.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "werr_lambda_errors" {
+  for_each = local._lambda_alarm_fns
+
+  alarm_name        = "${local.name_prefix}-Werr-${each.key}-errors"
+  alarm_description = "${each.value} Lambda 오류 발생 (5분 집계 ≥1)"
+  namespace         = "AWS/Lambda"
+  metric_name       = "Errors"
+  dimensions = {
+    FunctionName = each.value
+  }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
+  tags                = { Project = "curve-scaler" }
+}
+
+# ────────────────────────────────────────────────────────────────────
+# P7: AI Diagnoser Lambda + 진단 전용 SNS topic
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_sns_topic" "curve_diagnosis" {
+  name = "${local.name_prefix}-diagnosis"
+  tags = { Project = "curve-scaler" }
+}
+
+resource "aws_cloudwatch_log_group" "diagnoser" {
+  name              = "/aws/lambda/curve-diagnoser"
+  retention_in_days = 14
+  tags              = { Project = "curve-scaler" }
+}
+
+# IAM 인라인 확장 (기존 curve_lambda_inline 무수정, 별도 policy 추가)
+resource "aws_iam_role_policy" "curve_lambda_diagnoser" {
+  name = "${local.name_prefix}-lambda-diagnoser"
+  role = aws_iam_role.curve_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "BedrockConverse"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        # cross-region inference profile ARN 은 account 종속이므로 "*" 필요
+        Resource = "*"
+      },
+      {
+        Sid    = "FilterLogs"
+        Effect = "Allow"
+        Action = ["logs:FilterLogEvents"]
+        Resource = [
+          "${aws_cloudwatch_log_group.emitter.arn}:*",
+          "${aws_cloudwatch_log_group.writer.arn}:*",
+        ]
+      },
+      {
+        Sid      = "GetMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricData"]
+        Resource = "*"
+      },
+      {
+        Sid      = "PublishDiagnosis"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.curve_diagnosis.arn
+      },
+    ]
+  })
+}
+
+resource "aws_lambda_function" "diagnoser" {
+  function_name    = "curve-diagnoser"
+  description      = "알람 SNS -> 지표/로그/DB 수집 -> Bedrock 진단 -> 인용 검증 -> JSON"
+  filename         = data.archive_file.lambda.output_path
+  source_code_hash = data.archive_file.lambda.output_base64sha256
+  role             = aws_iam_role.curve_lambda.arn
+  handler          = "app.diagnoser_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  memory_size      = 512
+
+  vpc_config {
+    subnet_ids         = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  environment {
+    variables = merge(local.lambda_env, {
+      BEDROCK_MODEL_ID = var.bedrock_model_id
+      DIAG_TOPIC_ARN   = aws_sns_topic.curve_diagnosis.arn
+      LOG_GROUPS       = "/aws/lambda/curve-metric-emitter,/aws/lambda/curve-plan-writer"
+    })
+  }
+
+  tags       = { Project = "curve-scaler" }
+  depends_on = [aws_cloudwatch_log_group.diagnoser]
+}
+
+# curve_alerts -> diagnoser (루프 방지: diagnoser 는 diagnosis topic 에만 publish)
+resource "aws_sns_topic_subscription" "curve_alerts_to_diagnoser" {
+  topic_arn = aws_sns_topic.curve_alerts.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.diagnoser.arn
+}
+
+resource "aws_lambda_permission" "diagnoser_sns" {
+  statement_id  = "AllowSNSInvokeDiagnoser"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.diagnoser.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.curve_alerts.arn
+}
