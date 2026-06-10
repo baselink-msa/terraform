@@ -140,6 +140,12 @@ module "sqs_ticket_confirm" {
   dead_letter_queue_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
   dead_letter_queue_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
 
+  create_queue_backlog_alarm     = true
+  queue_backlog_alarm_name       = "${local.name_prefix}-ticket-confirm-queue-backlog"
+  queue_backlog_alarm_threshold  = 10
+  queue_backlog_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+  queue_backlog_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+
   tags = local.common_tags
 }
 
