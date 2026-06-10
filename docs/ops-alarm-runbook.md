@@ -338,7 +338,90 @@ aws sqs get-queue-attributes `
 - 원인이 DB schema, 권한, 애플리케이션 버그라면 수정 후 redrive합니다.
 - 자세한 redrive 절차는 `modules/sqs/README.md`의 DLQ 운영 절차를 따릅니다.
 
-## 7. Slack 알림 테스트
+## 7. 진단 스크립트와 AI 분석 템플릿
+
+알람을 받으면 먼저 `scripts/diagnose-data-alarm.ps1`로 현재 상태를 수집합니다.
+
+이 스크립트는 복구 작업을 실행하지 않고, 읽기 전용 진단 정보를 모읍니다.
+
+- CloudWatch Alarm 상태
+- RDS 상태와 CPU/커넥션/메모리/스토리지 metric
+- Valkey replication group 상태
+- SQS 원본 큐와 DLQ 적체 상태
+- EKS pod, HPA, ScaledObject 상태
+- `ticket-worker-service`, `ticket-service` 최근 로그
+
+실행 예시:
+
+```powershell
+.\scripts\diagnose-data-alarm.ps1 `
+  -AlarmName baselink-dev-rds-cpu-high `
+  -Namespace baselink-dev `
+  -LookbackMinutes 30
+```
+
+SQS 알람일 때:
+
+```powershell
+.\scripts\diagnose-data-alarm.ps1 `
+  -AlarmName baselink-dev-ticket-confirm-queue-backlog `
+  -Namespace baselink-dev `
+  -LookbackMinutes 30
+```
+
+AI 분석 요청 템플릿:
+
+```text
+아래는 Baselink dev 환경의 운영 알람 진단 결과입니다.
+
+목표:
+- 장애 원인 후보를 가능성 높은 순서로 정리
+- 즉시 완화 조치와 근본 해결 조치를 분리
+- 데이터 정합성에 위험한 작업은 승인 필요 작업으로 표시
+- 실행하면 안 되는 작업이 있다면 명확히 표시
+
+알람 이름:
+발생 시각:
+사용자 영향:
+
+진단 스크립트 출력:
+<scripts/diagnose-data-alarm.ps1 출력 붙여넣기>
+
+응답 형식:
+1. 현재 상황 요약
+2. 가장 가능성 높은 원인 후보
+3. 바로 확인할 추가 항목
+4. 안전한 1차 완화 조치
+5. 승인 후 진행해야 하는 조치
+6. 재발 방지 작업
+```
+
+### 알람별 조치 판단 기준
+
+| 알람 | 바로 해도 되는 조치 | 승인 후 진행할 조치 | 주의할 점 |
+| --- | --- | --- | --- |
+| RDS CPU 높음 | metric/로그 확인, 최근 배포 확인, 과도한 테스트 중단 | 인덱스 추가, 쿼리 변경, DB 인스턴스 크기 변경 | 인덱스 추가는 Flyway migration과 리뷰 필요 |
+| RDS 커넥션 많음 | pod 수/HPA 확인, DB timeout 로그 확인 | 커넥션 풀 제한 변경, replica/read 분리 설계 | 무작정 pod를 늘리면 DB 부하가 더 커질 수 있음 |
+| RDS 스토리지 부족 | 테스트 데이터 반복 적재 여부 확인 | 스토리지 증설, 대량 삭제, vacuum 전략 변경 | 삭제 작업은 백업/PITR 가능 상태 확인 후 진행 |
+| Valkey CPU 높음 | 예매 오픈/부하 테스트 여부 확인, hot key 후보 확인 | node type 상향, 캐시 key 설계 변경 | 캐시 flush는 좌석 선점/대기열 상태를 깨뜨릴 수 있음 |
+| Valkey evictions | TTL/key 증가 여부 확인 | 용량 증설, maxmemory-policy 재검토 | eviction은 좌석 lock 유실 가능성과 함께 판단 |
+| SQS 원본 큐 적체 | worker pod/HPA/KEDA 확인, worker 로그 확인 | worker concurrency 변경, KEDA 기준 변경 | DB 병목이면 worker만 늘려도 해결되지 않음 |
+| SQS DLQ 발생 | 메시지 수/실패 로그 확인 | 원인 수정 후 redrive | 원인 수정 전 redrive 금지 |
+
+### 직접 해결로 이어지는 작업 방식
+
+운영자는 알람을 보고 바로 리소스를 임의 변경하기보다, 변경 종류에 따라 아래 방식을 선택합니다.
+
+- DB 인덱스 추가: Flyway migration SQL 작성 후 PR
+- 쿼리 개선: backend 코드 수정 후 테스트/PR
+- 커넥션 풀 제한: backend 설정 또는 Kubernetes Secret/ConfigMap 변경 PR
+- worker 처리량 조정: GitOps의 KEDA/HPA 설정 변경 PR
+- DLQ redrive: 원인 수정 확인 후 운영 명령으로 수동 실행
+- RDS 복구: `modules/rds/RUNBOOK.md`의 PITR 절차에 따라 새 DB로 복원 후 전환 검토
+
+이 구조는 AI가 조치 후보를 빠르게 정리하도록 돕되, 데이터 정합성에 영향을 주는 작업은 사람이 승인하도록 하기 위한 운영 방식입니다.
+
+## 8. Slack 알림 테스트
 
 운영 알람을 실제 장애 없이 테스트하려면 CloudWatch Alarm 상태를 수동으로 바꿀 수 있습니다.
 
@@ -374,7 +457,7 @@ aws cloudwatch describe-alarms `
   --query "MetricAlarms[0].{Name:AlarmName,State:StateValue,Reason:StateReason}"
 ```
 
-## 8. 발표용 요약
+## 9. 발표용 요약
 
 이 프로젝트의 Data & Async Processing 운영 안정성은 다음 흐름으로 설명할 수 있습니다.
 
@@ -382,8 +465,9 @@ aws cloudwatch describe-alarms `
 - Valkey는 primary/replica Multi-AZ 구성과 CPU/메모리/eviction/복제 지연 알람으로 대기열과 좌석 선점 계층의 이상 징후를 감지합니다.
 - SQS는 원본 큐 backlog 알람으로 처리 지연을 조기에 감지하고, DLQ 알람과 redrive 절차로 최종 실패 메시지를 안전하게 복구할 수 있게 했습니다.
 - 모든 주요 알람은 SNS와 Amazon Q Developer를 통해 Slack으로 전달되어 팀이 장애와 복구 상태를 빠르게 공유할 수 있습니다.
+- 진단 스크립트와 AI 분석 템플릿을 함께 준비해, 운영자가 metric과 로그를 빠르게 수집하고 안전한 조치 후보를 판단할 수 있게 했습니다.
 
-## 9. 관련 문서
+## 10. 관련 문서
 
 - `modules/rds/RUNBOOK.md`: RDS PITR 복구 절차
 - `modules/rds/README.md`: RDS 백업/PITR 설정 설명
@@ -391,3 +475,4 @@ aws cloudwatch describe-alarms `
 - `env/dev/infra/rds_alarms.tf`: RDS CloudWatch Alarm Terraform 코드
 - `env/dev/infra/valkey_alarms.tf`: Valkey CloudWatch Alarm Terraform 코드
 - `modules/sqs/main.tf`: SQS DLQ 및 원본 큐 backlog 알람 Terraform 코드
+- `scripts/diagnose-data-alarm.ps1`: RDS, Valkey, SQS, EKS 상태 수집 스크립트
