@@ -30,6 +30,25 @@ function Invoke-CheckedCommand {
   }
 }
 
+function Get-SqsMetricStatistics {
+  param(
+    [string]$QueueName,
+    [string]$MetricName,
+    [string]$Statistic
+  )
+
+  aws cloudwatch get-metric-statistics `
+    --namespace AWS/SQS `
+    --metric-name $MetricName `
+    --dimensions Name=QueueName,Value=$QueueName `
+    --start-time $startTime `
+    --end-time $endTime `
+    --period 300 `
+    --statistics $Statistic `
+    --query "Datapoints[].{Time:Timestamp,Value:$Statistic}" `
+    --output table
+}
+
 $endTime = (Get-Date).ToUniversalTime().ToString("s")
 $startTime = (Get-Date).AddMinutes(-1 * $LookbackMinutes).ToUniversalTime().ToString("s")
 
@@ -66,7 +85,7 @@ Invoke-CheckedCommand "RDS CPUUtilization" {
     --start-time $startTime `
     --end-time $endTime `
     --period 300 `
-    --statistics Average,Maximum `
+    --statistics Average Maximum `
     --query "Datapoints[].{Time:Timestamp,Avg:Average,Max:Maximum}" `
     --output table
 }
@@ -79,7 +98,7 @@ Invoke-CheckedCommand "RDS DatabaseConnections" {
     --start-time $startTime `
     --end-time $endTime `
     --period 300 `
-    --statistics Average,Maximum `
+    --statistics Average Maximum `
     --query "Datapoints[].{Time:Timestamp,Avg:Average,Max:Maximum}" `
     --output table
 }
@@ -123,8 +142,13 @@ Invoke-CheckedCommand "SQS source queue attributes" {
 
   aws sqs get-queue-attributes `
     --queue-url $queueUrl `
-    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateAgeOfOldestMessage `
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed `
     --output table
+
+  Get-SqsMetricStatistics `
+    -QueueName $SourceQueueName `
+    -MetricName ApproximateAgeOfOldestMessage `
+    -Statistic Maximum
 }
 
 Invoke-CheckedCommand "SQS DLQ attributes" {
@@ -135,8 +159,13 @@ Invoke-CheckedCommand "SQS DLQ attributes" {
 
   aws sqs get-queue-attributes `
     --queue-url $dlqUrl `
-    --attribute-names ApproximateNumberOfMessages ApproximateAgeOfOldestMessage `
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible ApproximateNumberOfMessagesDelayed `
     --output table
+
+  Get-SqsMetricStatistics `
+    -QueueName $DeadLetterQueueName `
+    -MetricName ApproximateAgeOfOldestMessage `
+    -Statistic Maximum
 }
 
 Invoke-CheckedCommand "Kubernetes workload state" {
