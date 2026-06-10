@@ -325,13 +325,20 @@ resource "aws_bedrockagent_agent_action_group" "game_score_action_group" {
         "/get-game-schedule" = {
           get = {
             summary     = "경기 일정 및 스코어 조회"
-            description = "사용자의 질문에서 시간 키워드를 추출하여 timeframe 파라미터로 넘깁니다."
+            description = "사용자의 질문에서 날짜 범위를 직접 계산하여 startDate와 endDate를 전달합니다."
             operationId = "getGameSchedule"
             parameters = [
               {
-                name        = "timeframe"
+                name        = "startDate"
                 in          = "query"
-                description = "다음 키워드 중 하나만 정확히 입력하세요: '오늘', '내일', '이번주', '이번주_지난경기', '다음주', '전체'. 만약 특정 날짜면 'YYYY-MM-DD' 형식으로 입력하세요."
+                description = "조회 시작 날짜. 사용자의 질문에서 날짜 범위를 추론하여 YYYY-MM-DD 형식으로 입력하세요."
+                required    = true
+                schema      = { type = "string" }
+              },
+              {
+                name        = "endDate"
+                in          = "query"
+                description = "조회 종료 날짜. 사용자의 질문에서 날짜 범위를 추론하여 YYYY-MM-DD 형식으로 입력하세요."
                 required    = true
                 schema      = { type = "string" }
               }
