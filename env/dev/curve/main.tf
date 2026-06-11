@@ -1,19 +1,19 @@
 # curve-scaler terraform stack
 # Day 1: curve DB (module.curve_db), SG
 # Day 3: Lambda + EventBridge + VPC wiring
-# Day 4: Pod Identity (KEDA CloudWatch trigger)
+# Day 4: Pod Identity (KEDA CloudWatch trigger — C6: 팀 공유, 변경 금지)
 
 locals {
   name_prefix = "curve"
   lambda_env = {
-    DB_HOST          = module.curve_db.db_instance_address
-    DB_PORT          = "5432"
-    DB_NAME          = var.curve_db_name
-    DB_USER          = var.curve_db_user
-    SECRET_ARN       = module.curve_db.master_user_secret_arn
-    CEILING_RPS      = tostring(var.ceiling_rps)
-    SERVICES         = "order"
-    METRIC_NAMESPACE = "Baselink/CurveScaler"
+    DB_HOST                  = module.curve_db.db_instance_address
+    DB_PORT                  = "5432"
+    DB_NAME                  = var.curve_db_name
+    DB_USER                  = var.curve_db_user
+    SECRET_ARN               = module.curve_db.master_user_secret_arn
+    LOOKAHEAD_DAYS           = tostring(var.lookahead_days)
+    COST_PER_POD_HOUR        = tostring(var.cost_per_pod_hour)
+    SLACK_WEBHOOK_SECRET_ARN = aws_secretsmanager_secret.slack_webhook.arn
   }
 }
 
@@ -108,6 +108,20 @@ resource "aws_vpc_security_group_ingress_rule" "curve_db_from_lambda" {
   description                  = "PostgreSQL from curve-scaler Lambda"
 }
 
+# ── Slack Webhook Secret (writer 가 사전 리포트 발송에 사용) ──────────
+
+resource "aws_secretsmanager_secret" "slack_webhook" {
+  name                    = "${local.name_prefix}-slack-webhook"
+  description             = "Slack Incoming Webhook URL for curve-scaler weekly plan report"
+  recovery_window_in_days = 0
+  tags                    = { Project = "curve-scaler" }
+}
+
+resource "aws_secretsmanager_secret_version" "slack_webhook" {
+  secret_id     = aws_secretsmanager_secret.slack_webhook.id
+  secret_string = var.slack_webhook_url
+}
+
 # ── IAM 역할 (Lambda 실행) ──────────────────────────────────────────
 
 data "aws_iam_policy_document" "lambda_assume" {
@@ -141,16 +155,16 @@ resource "aws_iam_role_policy" "curve_lambda_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "PutMetrics"
-        Effect   = "Allow"
-        Action   = ["cloudwatch:PutMetricData"]
-        Resource = "*"
-      },
-      {
         Sid      = "GetSecret"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = module.curve_db.master_user_secret_arn
+      },
+      {
+        Sid      = "GetSlackWebhook"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.slack_webhook.arn
       },
       {
         Sid    = "Logs"
@@ -160,7 +174,10 @@ resource "aws_iam_role_policy" "curve_lambda_inline" {
           "logs:CreateLogStream",
           "logs:PutLogEvents",
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          aws_cloudwatch_log_group.writer.arn,
+          "${aws_cloudwatch_log_group.writer.arn}:*",
+        ]
       },
     ]
   })
@@ -179,7 +196,7 @@ data "archive_file" "lambda" {
 
 resource "aws_lambda_function" "writer" {
   function_name    = "curve-plan-writer"
-  description      = "D-1 예매 집계 -> scaling_plan predicted_rps (domain B)"
+  description      = "주1회 upcoming 게임 예약수 → scaling_plan UPSERT + Slack 사전 리포트"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
   role             = aws_iam_role.curve_lambda.arn
@@ -204,34 +221,7 @@ resource "aws_lambda_function" "writer" {
   depends_on = [aws_cloudwatch_log_group.writer]
 }
 
-resource "aws_lambda_function" "emitter" {
-  function_name    = "curve-metric-emitter"
-  description      = "1분마다 활성 윈도우 RPS -> CloudWatch Baselink/CurveScaler"
-  filename         = data.archive_file.lambda.output_path
-  source_code_hash = data.archive_file.lambda.output_base64sha256
-  role             = aws_iam_role.curve_lambda.arn
-  handler          = "app.emitter_handler"
-  runtime          = "python3.12"
-  timeout          = 15
-  memory_size      = 256
-
-  vpc_config {
-    subnet_ids         = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
-  environment {
-    variables = local.lambda_env
-  }
-
-  tags = {
-    Project = "curve-scaler"
-  }
-
-  depends_on = [aws_cloudwatch_log_group.emitter]
-}
-
-# ── CloudWatch Log Groups (retention 명시) ──────────────────────────
+# ── CloudWatch Log Group ─────────────────────────────────────────────
 
 resource "aws_cloudwatch_log_group" "writer" {
   name              = "/aws/lambda/curve-plan-writer"
@@ -239,13 +229,7 @@ resource "aws_cloudwatch_log_group" "writer" {
   tags              = { Project = "curve-scaler" }
 }
 
-resource "aws_cloudwatch_log_group" "emitter" {
-  name              = "/aws/lambda/curve-metric-emitter"
-  retention_in_days = 14
-  tags              = { Project = "curve-scaler" }
-}
-
-# ── EventBridge Scheduler: cron(04:00 KST) -> writer ───────────────
+# ── EventBridge Scheduler: cron(월요일 04:00 KST) -> writer ──────────
 
 data "aws_iam_policy_document" "scheduler_assume" {
   statement {
@@ -278,15 +262,15 @@ resource "aws_iam_role_policy" "curve_scheduler_invoke" {
   })
 }
 
-resource "aws_scheduler_schedule" "writer_daily" {
-  name       = "${local.name_prefix}-writer-daily"
+resource "aws_scheduler_schedule" "writer_weekly" {
+  name       = "${local.name_prefix}-writer-weekly"
   group_name = "default"
 
   flexible_time_window {
     mode = "OFF"
   }
 
-  schedule_expression          = "cron(0 4 * * ? *)"
+  schedule_expression          = "cron(0 4 ? * MON *)"
   schedule_expression_timezone = "Asia/Seoul"
 
   target {
@@ -296,30 +280,9 @@ resource "aws_scheduler_schedule" "writer_daily" {
   }
 }
 
-# ── EventBridge rule: rate(1 minute) -> emitter ─────────────────────
-
-resource "aws_cloudwatch_event_rule" "emitter_1min" {
-  name                = "${local.name_prefix}-emitter-1min"
-  description         = "Triggers curve-metric-emitter every minute"
-  schedule_expression = "rate(1 minute)"
-  tags                = { Project = "curve-scaler" }
-}
-
-resource "aws_cloudwatch_event_target" "emitter" {
-  rule = aws_cloudwatch_event_rule.emitter_1min.name
-  arn  = aws_lambda_function.emitter.arn
-}
-
-resource "aws_lambda_permission" "emitter_eventbridge" {
-  statement_id  = "AllowEventBridgeInvokeEmitter"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.emitter.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.emitter_1min.arn
-}
-
 # ────────────────────────────────────────────────────────────────────
 # Day 4: Pod Identity — EKS addon, KEDA CloudWatch IAM role, association
+# C6: 팀 KEDA keda-operator SA 가 공유하므로 변경 금지
 # ────────────────────────────────────────────────────────────────────
 
 resource "aws_eks_addon" "pod_identity_agent" {
@@ -378,7 +341,8 @@ resource "aws_eks_pod_identity_association" "keda_cloudwatch" {
 }
 
 # ────────────────────────────────────────────────────────────────────
-# P6: 워치독 알람 (W4 heartbeat / W1 clamp / Werr Lambda errors) + SNS
+# P6: 워치독 알람 (Werr writer errors) + SNS
+# W4 heartbeat / W1 clamp 알람은 emitter 제거로 함께 삭제
 # ────────────────────────────────────────────────────────────────────
 
 resource "aws_sns_topic" "curve_alerts" {
@@ -393,58 +357,13 @@ resource "aws_sns_topic_subscription" "curve_alerts_email" {
   endpoint  = var.alert_email
 }
 
-# W4: heartbeat 소실 (죽은 자는 부고를 못 보낸다 — 침묵=사망 판정)
-resource "aws_cloudwatch_metric_alarm" "w4_heartbeat_lost" {
-  alarm_name          = "${local.name_prefix}-W4-heartbeat-lost"
-  alarm_description   = "emitter 침묵 3분 — Lambda/VPC/DB 장애 가능성"
-  namespace           = "Baselink/CurveScaler"
-  metric_name         = "heartbeat"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 3
-  threshold           = 1
-  comparison_operator = "LessThanThreshold"
-  treat_missing_data  = "breaching"
-  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
-  tags                = { Project = "curve-scaler" }
-}
-
-# W1: clamp 발동 (예측값이 ceiling 에 도달)
-resource "aws_cloudwatch_metric_alarm" "w1_clamp_engaged" {
-  alarm_name        = "${local.name_prefix}-W1-clamp-engaged"
-  alarm_description = "predicted_rps ceiling(${var.ceiling_rps}) 도달 — 과대 예측 또는 계획 오염 확인"
-  namespace         = "Baselink/CurveScaler"
-  metric_name       = "clamp_engaged"
-  dimensions = {
-    service = "order"
-  }
-  statistic           = "Maximum"
-  period              = 60
-  evaluation_periods  = 2
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.curve_alerts.arn]
-  tags                = { Project = "curve-scaler" }
-}
-
-# Werr: Lambda 오류 — writer / emitter 각각 (for_each 2개)
-locals {
-  _lambda_alarm_fns = {
-    writer  = aws_lambda_function.writer.function_name
-    emitter = aws_lambda_function.emitter.function_name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "werr_lambda_errors" {
-  for_each = local._lambda_alarm_fns
-
-  alarm_name        = "${local.name_prefix}-Werr-${each.key}-errors"
-  alarm_description = "${each.value} Lambda 오류 발생 (5분 집계 ≥1)"
+resource "aws_cloudwatch_metric_alarm" "werr_writer_errors" {
+  alarm_name        = "${local.name_prefix}-Werr-writer-errors"
+  alarm_description = "curve-plan-writer Lambda 오류 발생 (5분 집계 ≥1)"
   namespace         = "AWS/Lambda"
   metric_name       = "Errors"
   dimensions = {
-    FunctionName = each.value
+    FunctionName = aws_lambda_function.writer.function_name
   }
   statistic           = "Sum"
   period              = 300
@@ -454,102 +373,4 @@ resource "aws_cloudwatch_metric_alarm" "werr_lambda_errors" {
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.curve_alerts.arn]
   tags                = { Project = "curve-scaler" }
-}
-
-# ────────────────────────────────────────────────────────────────────
-# P7: AI Diagnoser Lambda + 진단 전용 SNS topic
-# ────────────────────────────────────────────────────────────────────
-
-resource "aws_sns_topic" "curve_diagnosis" {
-  name = "${local.name_prefix}-diagnosis"
-  tags = { Project = "curve-scaler" }
-}
-
-resource "aws_cloudwatch_log_group" "diagnoser" {
-  name              = "/aws/lambda/curve-diagnoser"
-  retention_in_days = 14
-  tags              = { Project = "curve-scaler" }
-}
-
-# IAM 인라인 확장 (기존 curve_lambda_inline 무수정, 별도 policy 추가)
-resource "aws_iam_role_policy" "curve_lambda_diagnoser" {
-  name = "${local.name_prefix}-lambda-diagnoser"
-  role = aws_iam_role.curve_lambda.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "BedrockConverse"
-        Effect = "Allow"
-        Action = ["bedrock:InvokeModel"]
-        # cross-region inference profile ARN 은 account 종속이므로 "*" 필요
-        Resource = "*"
-      },
-      {
-        Sid    = "FilterLogs"
-        Effect = "Allow"
-        Action = ["logs:FilterLogEvents"]
-        Resource = [
-          "${aws_cloudwatch_log_group.emitter.arn}:*",
-          "${aws_cloudwatch_log_group.writer.arn}:*",
-        ]
-      },
-      {
-        Sid      = "GetMetrics"
-        Effect   = "Allow"
-        Action   = ["cloudwatch:GetMetricData"]
-        Resource = "*"
-      },
-      {
-        Sid      = "PublishDiagnosis"
-        Effect   = "Allow"
-        Action   = ["sns:Publish"]
-        Resource = aws_sns_topic.curve_diagnosis.arn
-      },
-    ]
-  })
-}
-
-resource "aws_lambda_function" "diagnoser" {
-  function_name    = "curve-diagnoser"
-  description      = "알람 SNS -> 지표/로그/DB 수집 -> Bedrock 진단 -> 인용 검증 -> JSON"
-  filename         = data.archive_file.lambda.output_path
-  source_code_hash = data.archive_file.lambda.output_base64sha256
-  role             = aws_iam_role.curve_lambda.arn
-  handler          = "app.diagnoser_handler"
-  runtime          = "python3.12"
-  timeout          = 60
-  memory_size      = 512
-
-  vpc_config {
-    subnet_ids         = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
-  environment {
-    variables = merge(local.lambda_env, {
-      BEDROCK_MODEL_ID = var.bedrock_model_id
-      DIAG_TOPIC_ARN   = aws_sns_topic.curve_diagnosis.arn
-      LOG_GROUPS       = "/aws/lambda/curve-metric-emitter,/aws/lambda/curve-plan-writer"
-    })
-  }
-
-  tags       = { Project = "curve-scaler" }
-  depends_on = [aws_cloudwatch_log_group.diagnoser]
-}
-
-# curve_alerts -> diagnoser (루프 방지: diagnoser 는 diagnosis topic 에만 publish)
-resource "aws_sns_topic_subscription" "curve_alerts_to_diagnoser" {
-  topic_arn = aws_sns_topic.curve_alerts.arn
-  protocol  = "lambda"
-  endpoint  = aws_lambda_function.diagnoser.arn
-}
-
-resource "aws_lambda_permission" "diagnoser_sns" {
-  statement_id  = "AllowSNSInvokeDiagnoser"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.diagnoser.function_name
-  principal     = "sns.amazonaws.com"
-  source_arn    = aws_sns_topic.curve_alerts.arn
 }
