@@ -197,13 +197,11 @@ data "aws_iam_policy_document" "backend_runtime_irsa_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # keda-operator 는 전용 최소권한 역할(keda_operator_irsa)로 분리 — B1
     condition {
       test     = "StringEquals"
       variable = "${local.eks_oidc_issuer}:sub"
-      values = [
-        "system:serviceaccount:baselink-dev:backend-runtime",
-        "system:serviceaccount:keda:keda-operator"
-      ]
+      values   = ["system:serviceaccount:baselink-dev:backend-runtime"]
     }
   }
 }
@@ -254,4 +252,65 @@ resource "aws_iam_role_policy" "backend_runtime_irsa" {
 output "backend_runtime_irsa_role_arn" {
   description = "IAM role ARN used by the backend-runtime Kubernetes service account."
   value       = aws_iam_role.backend_runtime_irsa.arn
+}
+
+#==============================================================================
+# B1) KEDA operator 전용 최소권한 IRSA
+#     sqs:GetQueueAttributes + sqs:GetQueueUrl 만 허용.
+#     backend_runtime_irsa 에서 keda-operator SA 를 제거하고 이 역할을 사용한다.
+#     적용 전 검토 필요 — 부분 적용 시 KEDA SQS 스케일러가 권한을 잃음.
+#==============================================================================
+data "aws_iam_policy_document" "keda_operator_irsa_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.eks_oidc_issuer}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.eks_oidc_issuer}:sub"
+      values   = ["system:serviceaccount:keda:keda-operator"]
+    }
+  }
+}
+
+resource "aws_iam_role" "keda_operator_irsa" {
+  name               = "${local.name_prefix}-keda-operator-irsa"
+  assume_role_policy = data.aws_iam_policy_document.keda_operator_irsa_assume_role.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy" "keda_operator_irsa" {
+  name = "${local.name_prefix}-keda-operator"
+  role = aws_iam_role.keda_operator_irsa.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SQSScalerRead"
+        Effect = "Allow"
+        Action = [
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+        ]
+        Resource = module.sqs_ticket_confirm.queue_arn
+      }
+    ]
+  })
+}
+
+output "keda_operator_irsa_role_arn" {
+  description = "Minimal IRSA role for KEDA operator (sqs:GetQueueAttributes + GetQueueUrl only)."
+  value       = aws_iam_role.keda_operator_irsa.arn
 }
