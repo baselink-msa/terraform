@@ -65,7 +65,32 @@ jobs:
         working-directory: env/dev/infra
         run: |
           terraform init -input=false
-          terraform apply -auto-approve -input=false
+          set +e
+          terraform plan -detailed-exitcode -out=tfplan -input=false
+          plan_exit=$?
+          set -e
+
+          if [ "$plan_exit" -eq 1 ]; then
+            exit 1
+          fi
+
+          if terraform show -json tfplan | jq -e '
+            any(.resource_changes[]?;
+              .address == "aws_instance.github_actions_runner"
+              and ((.change.actions | index("delete")) != null)
+            )
+          '; then
+            echo "Refusing to apply: plan would delete or replace the self-hosted runner EC2."
+            echo "Update the runner from a bootstrap/local flow instead of from the runner itself."
+            exit 1
+          fi
+
+          if [ "$plan_exit" -eq 0 ]; then
+            echo "No infra changes to apply."
+            exit 0
+          fi
+
+          terraform apply -input=false tfplan
 
       - name: Terraform apply ecr
         working-directory: env/dev/ecr
