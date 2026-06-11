@@ -1,0 +1,193 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/terraform-*.yml"
+      - "env/dev/**"
+      - "modules/**"
+      - "scripts/post-apply-dev.sh"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: terraform-dev-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_cloudfront_origin_verify_header_value: ${{ secrets.CF_ORIGIN_VERIFY_HEADER_VALUE }}
+
+jobs:
+  plan:
+    name: Plan dev infrastructure
+    runs-on: [self-hosted, baselink-dev, iac]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.9
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        id: fmt
+        run: |
+          set +e
+          git ls-files '*.tf' | xargs terraform fmt -check
+          fmt_status=$?
+          if [ "$fmt_status" -ne 0 ]; then
+            echo "::warning::terraform fmt check failed on the self-hosted runner. Continuing to run terraform plan."
+          fi
+          exit 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Restore tfvars
+        env:
+          DEV_INFRA_TFVARS: ${{ secrets.DEV_INFRA_TFVARS }}
+          DEV_ECR_TFVARS: ${{ secrets.DEV_ECR_TFVARS }}
+          DEV_ADDON_TFVARS: ${{ secrets.DEV_ADDON_TFVARS }}
+          DEV_CLOUDFRONT_TFVARS: ${{ secrets.DEV_CLOUDFRONT_TFVARS }}
+        run: |
+          printf '%s' "$DEV_INFRA_TFVARS" > env/dev/infra/terraform.tfvars
+          printf '%s' "$DEV_ECR_TFVARS" > env/dev/ecr/terraform.tfvars
+          printf '%s' "$DEV_ADDON_TFVARS" > env/dev/addon/terraform.tfvars
+          printf '%s' "$DEV_CLOUDFRONT_TFVARS" > env/dev/cloudfront/terraform.tfvars
+
+      - name: Terraform plan
+        id: plan
+        shell: bash
+        run: |
+          set +e
+
+          status=0
+          mkdir -p /tmp/tf-plan-results
+          : > /tmp/tf-plan-results/comment.md
+
+          for root in env/dev/infra env/dev/ecr env/dev/addon env/dev/cloudfront; do
+            safe_root="${root//\//-}"
+            {
+              echo "## ${root}"
+              echo
+            } >> /tmp/tf-plan-results/comment.md
+
+            timeout 300 terraform -chdir="$root" init -input=false -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-init.txt"
+            init_status=${PIPESTATUS[0]}
+
+            if [ "$init_status" -ne 0 ]; then
+              status=$init_status
+              {
+                echo "**init failed**"
+                echo
+                echo '```text'
+                tail -c 12000 "/tmp/tf-plan-results/${safe_root}-init.txt"
+                echo
+                echo '```'
+                echo
+              } >> /tmp/tf-plan-results/comment.md
+              continue
+            fi
+
+            timeout 300 terraform -chdir="$root" validate -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-validate.txt"
+            validate_status=${PIPESTATUS[0]}
+
+            if [ "$validate_status" -ne 0 ]; then
+              status=$validate_status
+              {
+                echo "**validate failed**"
+                echo
+                echo '```text'
+                tail -c 12000 "/tmp/tf-plan-results/${safe_root}-validate.txt"
+                echo
+                echo '```'
+                echo
+              } >> /tmp/tf-plan-results/comment.md
+              continue
+            fi
+
+            timeout 900 terraform -chdir="$root" plan -input=false -lock-timeout=60s -no-color 2>&1 | tee "/tmp/tf-plan-results/${safe_root}-plan.txt"
+            plan_status=${PIPESTATUS[0]}
+
+            if [ "$plan_status" -ne 0 ]; then
+              status=$plan_status
+              echo "**plan failed**" >> /tmp/tf-plan-results/comment.md
+            else
+              echo "**plan succeeded**" >> /tmp/tf-plan-results/comment.md
+            fi
+
+            {
+              echo
+              echo '```text'
+              tail -c 18000 "/tmp/tf-plan-results/${safe_root}-plan.txt"
+              echo
+              echo '```'
+              echo
+            } >> /tmp/tf-plan-results/comment.md
+          done
+
+          {
+            echo "PLAN_EXIT_CODE=$status"
+          } >> "$GITHUB_OUTPUT"
+
+          exit 0
+
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- baselink-terraform-plan -->';
+            const plan = fs.readFileSync('/tmp/tf-plan-results/comment.md', 'utf8');
+            const body = [
+              marker,
+              '# Terraform Plan',
+              '',
+              plan,
+              '',
+              `_Workflow: ${context.workflow} / Run: ${context.runId}_`,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const previous = comments.data.find((comment) => comment.body?.includes(marker));
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Fail when plan failed
+        if: steps.plan.outputs.PLAN_EXIT_CODE != '0'
+        run: exit 1

@@ -86,15 +86,18 @@ resource "aws_vpc_security_group_egress_rule" "rds_all" {
 module "rds" {
   source = "../../../modules/rds"
 
-  identifier             = "${local.name_prefix}-postgres"
-  db_name                = "baseball_platform"
-  username               = "baseball"
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.rds.name
-  publicly_accessible    = false
-  multi_az               = true
-  skip_final_snapshot    = true
-  tags                   = local.common_tags
+  identifier              = "${local.name_prefix}-postgres"
+  db_name                 = "baseball_platform"
+  username                = "baseball"
+  vpc_security_group_ids  = [aws_security_group.rds.id]
+  db_subnet_group_name    = aws_db_subnet_group.rds.name
+  publicly_accessible     = false
+  multi_az                = true
+  backup_retention_period = 7
+  backup_window           = "18:00-18:30"
+  copy_tags_to_snapshot   = true
+  skip_final_snapshot     = true
+  tags                    = local.common_tags
 }
 
 module "elasticache" {
@@ -136,6 +139,12 @@ module "sqs_ticket_confirm" {
   dead_letter_queue_alarm_name       = "${local.name_prefix}-ticket-confirm-dlq-messages-visible"
   dead_letter_queue_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
   dead_letter_queue_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+
+  create_queue_backlog_alarm     = true
+  queue_backlog_alarm_name       = "${local.name_prefix}-ticket-confirm-queue-backlog"
+  queue_backlog_alarm_threshold  = 10
+  queue_backlog_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+  queue_backlog_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
 
   tags = local.common_tags
 }
@@ -314,3 +323,101 @@ output "keda_operator_irsa_role_arn" {
   description = "Minimal IRSA role for KEDA operator (sqs:GetQueueAttributes + GetQueueUrl only)."
   value       = aws_iam_role.keda_operator_irsa.arn
 }
+
+# --- 람다 및 베드락 설정 시작 ---
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../src/lambda_function.py"
+  output_path = "${path.module}/lambda_function.zip"
+}
+
+resource "aws_iam_role" "lambda_role" {
+  name = "baselink_lambda_execution_role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_lambda_function" "bedrock_action_lambda" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = "baselink-game-schedule-action"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 10
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      GAME_API_URL = "https://${var.cloudfront_distribution_domain_name}/api/games"
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_bedrock_invoke" {
+  statement_id  = "AllowBedrockInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.bedrock_action_lambda.function_name
+  principal     = "bedrock.amazonaws.com"
+}
+
+resource "aws_bedrockagent_agent_action_group" "game_score_action_group" {
+  action_group_name          = "GameScoreActionGroup"
+  agent_id                   = "PZBTYB3SFA"
+  agent_version              = "DRAFT"
+  description                = "야구 경기 일정 및 스코어 조회를 위한 액션 그룹"
+  skip_resource_in_use_check = true
+
+  action_group_executor {
+    lambda = aws_lambda_function.bedrock_action_lambda.arn
+  }
+
+  api_schema {
+    payload = jsonencode({
+      openapi = "3.0.0"
+      info    = { title = "Baseball DB API", version = "1.0.0" }
+      paths = {
+        "/get-game-schedule" = {
+          get = {
+            summary     = "경기 일정 및 스코어 조회"
+            description = "사용자의 질문에서 날짜 범위를 직접 계산하여 startDate와 endDate를 전달합니다."
+            operationId = "getGameSchedule"
+            parameters = [
+              {
+                name        = "startDate"
+                in          = "query"
+                description = "조회 시작 날짜. 사용자의 질문에서 날짜 범위를 추론하여 YYYY-MM-DD 형식으로 입력하세요."
+                required    = true
+                schema      = { type = "string" }
+              },
+              {
+                name        = "endDate"
+                in          = "query"
+                description = "조회 종료 날짜. 사용자의 질문에서 날짜 범위를 추론하여 YYYY-MM-DD 형식으로 입력하세요."
+                required    = true
+                schema      = { type = "string" }
+              }
+            ]
+            responses = {
+              "200" = {
+                description = "성공"
+                content     = { "application/json" = { schema = { type = "object", properties = { result = { type = "string" } } } } }
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+}
+# --- 람다 및 베드락 설정 끝 ---
