@@ -80,6 +80,13 @@ resource "aws_instance" "github_actions_runner" {
   associate_public_ip_address = false
   user_data_replace_on_change = true
 
+  lifecycle {
+    ignore_changes = [
+      ami,
+      user_data,
+    ]
+  }
+
   metadata_options {
     http_endpoint = "enabled"
     http_tokens   = "required"
