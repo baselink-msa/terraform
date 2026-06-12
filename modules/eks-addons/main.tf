@@ -17,10 +17,6 @@ terraform {
       source  = "hashicorp/helm"
       version = ">= 2.12, < 3.0"
     }
-    http = {
-      source  = "hashicorp/http"
-      version = ">= 3.4"
-    }
     kubectl = {
       source  = "gavinbunney/kubectl"
       version = ">= 1.14"
@@ -28,6 +24,10 @@ terraform {
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.30"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = ">= 2.0"
     }
   }
 }
@@ -51,12 +51,8 @@ locals {
 # 0) AWS Load Balancer Controller 설치
 #    GitOps 레포의 Ingress가 ALB를 만들 수 있도록 컨트롤러와 IRSA를 준비한다.
 #==============================================================================
-data "http" "aws_load_balancer_controller_policy" {
-  url = var.aws_load_balancer_controller_policy_url
-
-  request_headers = {
-    Accept = "application/json"
-  }
+data "local_file" "aws_load_balancer_controller_policy" {
+  filename = "${path.module}/files/lbc-iam-policy-v2.14.1.json"
 }
 
 data "aws_iam_policy_document" "aws_load_balancer_controller_assume" {
@@ -91,7 +87,7 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
 resource "aws_iam_policy" "aws_load_balancer_controller" {
   name        = "${var.cluster_name}-AWSLoadBalancerControllerIAMPolicy"
   description = "IAM policy for AWS Load Balancer Controller on ${var.cluster_name}"
-  policy      = data.http.aws_load_balancer_controller_policy.response_body
+  policy      = data.local_file.aws_load_balancer_controller_policy.content
   tags        = var.tags
 }
 
@@ -454,7 +450,9 @@ resource "aws_eks_access_entry" "karpenter_node" {
 # EC2 Spot service-linked role (계정당 1회).
 # 부재 시 Spot CreateFleet 이 실패하여 batch/general 의 Spot 설계가 동작하지 않음.
 # 실측: 2026-06-04 기준 본 계정에 미존재 확인 → Terraform 으로 생성·관리.
+# 이미 계정에 존재하는 경우: create_spot_slr=false 로 import 없이 건너뜀.
 resource "aws_iam_service_linked_role" "ec2_spot" {
+  count            = var.create_spot_slr ? 1 : 0
   aws_service_name = "spot.amazonaws.com"
 }
 
@@ -647,6 +645,43 @@ resource "helm_release" "keda" {
     }
   }
 
+  # Operator HA (leader election 으로 active/standby 안전)
+  set {
+    name  = "operator.replicaCount"
+    value = 2
+  }
+  # Metrics API Server HA
+  set {
+    name  = "metricsServer.replicaCount"
+    value = 2
+  }
+
+  # metricsServer / webhooks 컴포넌트별 toleration (글로벌 tolerations 미적용 대상)
+  set {
+    name  = "metricsServer.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "metricsServer.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "metricsServer.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+  set {
+    name  = "webhooks.tolerations[0].key"
+    value = "CriticalAddonsOnly"
+  }
+  set {
+    name  = "webhooks.tolerations[0].operator"
+    value = "Exists"
+  }
+  set {
+    name  = "webhooks.tolerations[0].effect"
+    value = "NoSchedule"
+  }
+
   # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
   depends_on = [helm_release.aws_load_balancer_controller]
 }
@@ -732,7 +767,7 @@ resource "kubectl_manifest" "nodepool_critical" {
         }
       }
       limits = {
-        cpu    = "500"
+        cpu    = var.nodepool_critical_cpu_limit
         memory = "500Gi"
       }
       disruption = {
@@ -794,7 +829,7 @@ resource "kubectl_manifest" "nodepool_general" {
         }
       }
       limits = {
-        cpu    = "300"
+        cpu    = var.nodepool_general_cpu_limit
         memory = "300Gi"
       }
       disruption = {
@@ -856,7 +891,7 @@ resource "kubectl_manifest" "nodepool_batch" {
         }
       }
       limits = {
-        cpu    = "300"
+        cpu    = var.nodepool_batch_cpu_limit
         memory = "300Gi"
       }
       disruption = {

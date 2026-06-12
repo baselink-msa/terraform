@@ -57,11 +57,6 @@ variable "aws_load_balancer_controller_version" {
   default     = "1.14.0"
 }
 
-variable "aws_load_balancer_controller_policy_url" {
-  description = "Official IAM policy JSON URL for AWS Load Balancer Controller."
-  type        = string
-  default     = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.14.1/docs/install/iam_policy.json"
-}
 
 #--- 네임스페이스 ------------------------------------------------------------
 variable "karpenter_namespace" {
@@ -94,6 +89,13 @@ variable "aws_load_balancer_controller_namespace" {
   default     = "kube-system"
 }
 
+#--- Spot SLR ----------------------------------------------------------------
+variable "create_spot_slr" {
+  description = "EC2 Spot service-linked role 생성 여부. 계정에 이미 존재하면 false 로 건너뜀 (import 불필요)."
+  type        = bool
+  default     = true
+}
+
 #--- 중단 알림 큐 ------------------------------------------------------------
 variable "enable_interruption_queue" {
   description = "Spot 회수·인스턴스 상태 이벤트용 SQS 큐 + EventBridge 규칙 생성 여부"
@@ -112,6 +114,24 @@ variable "node_arch" {
   description = "노드 CPU 아키텍처 (amd64 / arm64)"
   type        = list(string)
   default     = ["amd64", "arm64"]
+}
+
+variable "nodepool_critical_cpu_limit" {
+  description = "Critical NodePool CPU 상한 (결제·funnel OnDemand 전용). 업그레이드 시 팀 워크로드 기준으로 조정. # dev 낮은 값 예시: \"64\""
+  type        = string
+  default     = "500"
+}
+
+variable "nodepool_general_cpu_limit" {
+  description = "General NodePool CPU 상한 (game·order·admin·ai-chatbot Spot+OnDemand). # dev 낮은 값 예시: \"32\""
+  type        = string
+  default     = "300"
+}
+
+variable "nodepool_batch_cpu_limit" {
+  description = "Batch NodePool CPU 상한 (ticket-worker SQS 비동기 Spot 우선). # dev 낮은 값 예시: \"32\""
+  type        = string
+  default     = "300"
 }
 
 #--- 공통 --------------------------------------------------------------------

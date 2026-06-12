@@ -20,10 +20,16 @@ variable "curve_db_user" {
   description = "curve DB master 사용자명"
 }
 
-variable "ceiling_rps" {
+variable "lookahead_days" {
   type        = number
-  default     = 160
-  description = "CloudWatch 에 발행할 predicted_rps 최대 clamp 값"
+  default     = 14
+  description = "writer Lambda 가 scaling_plan 을 미리 채울 경기 horizon (일 단위)"
+}
+
+variable "slack_webhook_url" {
+  type        = string
+  sensitive   = true
+  description = "curve-scaler 주간 사전 리포트를 발송할 Slack Incoming Webhook URL"
 }
 
 variable "curve_db_subnet_group_name" {
@@ -43,10 +49,8 @@ variable "alert_email" {
   description = "P6 워치독 알람 수신 이메일. 비어 있으면 SNS email 구독 생략 (topic 은 생성됨)."
 }
 
-variable "bedrock_model_id" {
-  type        = string
-  description = <<-EOT
-    P7 AI Diagnoser Bedrock 모델 ID. ★default 없음 — 이 값이 없으면 plan 실패 (의도된 P0 게이트).★
-    조회: aws bedrock list-inference-profiles --region ap-northeast-2 --profile agh
-  EOT
+variable "cost_per_pod_hour" {
+  type        = number
+  default     = 0.02
+  description = "리포트 예상 비용 계산용 pod 시간당 단가(USD). 노드 경제성에 맞춰 조정."
 }
