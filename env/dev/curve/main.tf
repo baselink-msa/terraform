@@ -317,15 +317,27 @@ resource "aws_iam_role_policy" "keda_cloudwatch_inline" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid    = "KEDACloudWatch"
-      Effect = "Allow"
-      Action = [
-        "cloudwatch:GetMetricData",
-        "cloudwatch:ListMetrics",
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Sid    = "KEDACloudWatch"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics",
+        ]
+        Resource = "*"
+      },
+      {
+        # 팀 ticket-confirm-queue SQS 스케일러용 — keda-operator 가 Pod Identity 로 사용
+        Sid    = "KEDASQSScalerRead"
+        Effect = "Allow"
+        Action = [
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+        ]
+        Resource = "arn:aws:sqs:ap-northeast-2:740831361032:ticket-confirm-queue"
+      },
+    ]
   })
 }
 

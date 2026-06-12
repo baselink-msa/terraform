@@ -19,7 +19,7 @@ module "eks_addons" {
   vpc_id                 = data.terraform_remote_state.infra.outputs.vpc_id
   oidc_provider_arn      = data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn
   oidc_provider_url      = data.terraform_remote_state.infra.outputs.eks_oidc_provider_url
-  keda_operator_role_arn = data.terraform_remote_state.infra.outputs.backend_runtime_irsa_role_arn
+  keda_operator_role_arn = ""   # operator 는 Pod Identity(keda_cloudwatch)로 자격증명
   node_subnet_ids        = data.terraform_remote_state.infra.outputs.private_app_subnet_ids
   node_security_group_ids = [
     data.terraform_remote_state.infra.outputs.eks_cluster_security_group_id
