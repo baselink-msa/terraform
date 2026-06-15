@@ -100,6 +100,16 @@ module "rds" {
   tags                    = local.common_tags
 }
 
+module "backup" {
+  source = "../../../modules/backup"
+
+  name_prefix       = local.name_prefix
+  rule_name         = "daily-rds-snapshot"
+  resource_arns     = [module.rds.db_instance_arn]
+  delete_after_days = 7
+  tags              = local.common_tags
+}
+
 module "elasticache" {
   source = "../../../modules/elasticache"
 

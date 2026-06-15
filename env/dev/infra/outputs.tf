@@ -83,6 +83,16 @@ output "rds_master_user_secret_arn" {
   value       = module.rds.master_user_secret_arn
 }
 
+output "rds_backup_vault_name" {
+  description = "AWS Backup vault name protecting the dev RDS instance."
+  value       = module.backup.backup_vault_name
+}
+
+output "rds_backup_plan_id" {
+  description = "AWS Backup plan ID protecting the dev RDS instance."
+  value       = module.backup.backup_plan_id
+}
+
 output "redis_primary_endpoint" {
   description = "Primary endpoint of the dev Redis replication group."
   value       = module.elasticache.primary_endpoint_address
