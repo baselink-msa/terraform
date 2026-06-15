@@ -77,3 +77,8 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "grafana_origin_domain_name" {
+  description = "Grafana ALB domain name"
+  type        = string
+}
