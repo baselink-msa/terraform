@@ -17,3 +17,8 @@ output "master_user_secret_arn" {
   description = "ARN of the Secrets Manager secret managed by RDS for the master user."
   value       = try(aws_db_instance.this.master_user_secret[0].secret_arn, null)
 }
+
+output "db_instance_arn" {
+  description = "ARN of the RDS DB instance."
+  value       = aws_db_instance.this.arn
+}
