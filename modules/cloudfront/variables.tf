@@ -67,6 +67,12 @@ variable "api_origin_request_policy_id" {
   type        = string
 }
 
+variable "grafana_origin_request_policy_id" {
+  description = "CloudFront origin request policy ID used by the /grafana/* cache behavior."
+  type        = string
+  default     = "216adef6-5c7f-47e4-b989-5492eafa07d3"  # AllViewer
+}
+
 variable "web_acl_arn" {
   description = "CloudFront-scope WAF web ACL ARN."
   type        = string
