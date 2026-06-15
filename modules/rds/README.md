@@ -70,6 +70,28 @@ aws rds describe-db-instances `
 
 실제 장애 복구 절차는 [RUNBOOK.md](./RUNBOOK.md)를 참고합니다.
 
+## 삭제 보호와 최종 스냅샷
+
+RDS는 데이터가 저장되는 핵심 리소스이므로 실수 삭제를 막기 위해 삭제 보호를 사용할 수 있습니다.
+
+```hcl
+deletion_protection       = true
+skip_final_snapshot       = false
+final_snapshot_identifier = "${local.name_prefix}-postgres-final-snapshot"
+```
+
+각 설정의 의미는 다음과 같습니다.
+
+- `deletion_protection`: RDS 인스턴스 삭제를 AWS API 수준에서 차단합니다. 이 값이 `true`이면 `terraform destroy`나 실수 삭제가 바로 성공하지 않습니다.
+- `skip_final_snapshot`: RDS를 삭제할 때 마지막 스냅샷을 생략할지 여부입니다. `false`이면 삭제 전에 최종 스냅샷을 남깁니다.
+- `final_snapshot_identifier`: 최종 스냅샷 이름입니다. 삭제 보호를 의도적으로 끄고 RDS를 삭제하는 경우 이 이름으로 마지막 복구 지점을 남깁니다.
+
+운영 원칙:
+
+- 일반적인 비용 절감 목적의 destroy에서는 RDS 삭제를 피합니다.
+- 정말 RDS를 삭제해야 한다면 팀 합의 후 `deletion_protection = false`로 변경하는 PR을 먼저 머지합니다.
+- 삭제 전에는 자동 백업/PITR 상태와 최종 스냅샷 이름 충돌 여부를 확인합니다.
+
 ## Multi-AZ와 PITR 차이
 
 Multi-AZ와 PITR은 모두 안정성을 위한 설정이지만 해결하는 문제가 다릅니다.

@@ -96,7 +96,9 @@ module "rds" {
   backup_retention_period = 7
   backup_window           = "18:00-18:30"
   copy_tags_to_snapshot   = true
-  skip_final_snapshot     = true
+  deletion_protection     = true
+  skip_final_snapshot     = false
+  final_snapshot_identifier = "${local.name_prefix}-postgres-final-snapshot"
   tags                    = local.common_tags
 }
 

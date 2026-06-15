@@ -85,10 +85,22 @@ variable "copy_tags_to_snapshot" {
   default     = false
 }
 
+variable "deletion_protection" {
+  description = "Whether to prevent accidental deletion of the DB instance."
+  type        = bool
+  default     = false
+}
+
 variable "skip_final_snapshot" {
   description = "Whether to skip final snapshot on destroy."
   type        = bool
   default     = true
+}
+
+variable "final_snapshot_identifier" {
+  description = "Final snapshot identifier used when skip_final_snapshot is false. Defaults to <identifier>-final-snapshot."
+  type        = string
+  default     = null
 }
 
 variable "publicly_accessible" {

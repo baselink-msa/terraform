@@ -167,13 +167,13 @@ Terraform apply in DR region
 - backup retention은 7일로 설정되어 있습니다.
 - backup window는 UTC `18:00-18:30`입니다.
 - copy tags to snapshot이 활성화되어 있습니다.
-- 현재 모듈은 `skip_final_snapshot = true`를 사용합니다.
+- deletion protection을 활성화해 실수 삭제를 막습니다.
+- final snapshot을 활성화해 의도적 삭제 시 마지막 복구 지점을 남깁니다.
 
 권장:
 
-- `deletion_protection = true`를 추가합니다.
-- 운영 기준에서는 `skip_final_snapshot = false`로 전환합니다.
-- final snapshot 이름 규칙을 둡니다.
+- 삭제 보호를 해제하는 변경은 별도 PR과 팀 합의 후 진행합니다.
+- final snapshot 이름 충돌 여부를 삭제 전 확인합니다.
 - AWS Backup backup vault와 backup plan을 추가합니다.
 - continuous backup은 7일, daily snapshot은 7~14일 보존을 기본으로 검토합니다.
 - 중요한 시점에는 on-demand backup을 생성합니다.
