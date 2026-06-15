@@ -19,8 +19,10 @@ resource "aws_db_instance" "this" {
   backup_window           = var.backup_window
   copy_tags_to_snapshot   = var.copy_tags_to_snapshot
 
-  skip_final_snapshot = var.skip_final_snapshot
-  publicly_accessible = var.publicly_accessible
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.skip_final_snapshot ? null : coalesce(var.final_snapshot_identifier, "${var.identifier}-final-snapshot")
+  publicly_accessible       = var.publicly_accessible
 
   tags = var.tags
 }
