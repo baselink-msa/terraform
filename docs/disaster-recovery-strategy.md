@@ -459,6 +459,7 @@ Pilot Light 구성:
 
 ## 10. 참고
 
+- DR 발표 요약: `docs/disaster-recovery-presentation-summary.md`
 - AWS Backup continuous backup과 PITR: https://docs.aws.amazon.com/aws-backup/latest/devguide/point-in-time-recovery.html
 - AWS Backup cross-region backup copy: https://docs.aws.amazon.com/aws-backup/latest/devguide/cross-region-backup.html
 - AWS Backup pricing: https://aws.amazon.com/backup/pricing/
