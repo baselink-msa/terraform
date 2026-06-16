@@ -136,6 +136,18 @@ variable "waf_rate_limit" {
   default     = 1000
 }
 
+variable "waf_blocked_requests_alarm_threshold" {
+  description = "Number of WAF blocked requests in one evaluation period that triggers Slack alerting."
+  type        = number
+  default     = 0
+}
+
+variable "waf_counted_requests_alarm_threshold" {
+  description = "Number of WAF counted requests in one evaluation period that triggers Slack alerting."
+  type        = number
+  default     = 0
+}
+
 variable "cloudfront_distribution_id" {
   description = "CloudFront distribution ID managed by the dev cloudfront layer."
   type        = string

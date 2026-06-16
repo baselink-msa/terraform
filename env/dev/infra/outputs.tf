@@ -128,9 +128,19 @@ output "ops_alerts_sns_topic_arn" {
   value       = var.enable_slack_alerts ? aws_sns_topic.ops_alerts[0].arn : null
 }
 
+output "edge_ops_alerts_sns_topic_arn" {
+  description = "SNS topic ARN used for us-east-1 edge operations alerts."
+  value       = var.enable_slack_alerts ? aws_sns_topic.edge_ops_alerts[0].arn : null
+}
+
 output "ops_alerts_slack_configuration_arn" {
   description = "Amazon Q Developer Slack channel configuration ARN for operations alerts."
   value       = var.enable_slack_alerts ? aws_chatbot_slack_channel_configuration.ops_alerts[0].chat_configuration_arn : null
+}
+
+output "edge_ops_alerts_slack_configuration_arn" {
+  description = "Amazon Q Developer Slack channel configuration ARN for us-east-1 edge operations alerts."
+  value       = var.enable_slack_alerts ? aws_chatbot_slack_channel_configuration.edge_ops_alerts[0].chat_configuration_arn : null
 }
 
 output "cloudfront_waf_web_acl_arn" {
