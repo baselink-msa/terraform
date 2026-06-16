@@ -111,7 +111,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     cached_methods           = ["GET", "HEAD", "OPTIONS"]
     cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
     compress                 = true
-    origin_request_policy_id = var.api_origin_request_policy_id
+    origin_request_policy_id = var.grafana_origin_request_policy_id
   }
 
   custom_error_response {
