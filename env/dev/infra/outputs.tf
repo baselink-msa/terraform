@@ -138,11 +138,6 @@ output "ops_alerts_slack_configuration_arn" {
   value       = var.enable_slack_alerts ? aws_chatbot_slack_channel_configuration.ops_alerts[0].chat_configuration_arn : null
 }
 
-output "edge_ops_alerts_slack_configuration_arn" {
-  description = "Amazon Q Developer Slack channel configuration ARN for us-east-1 edge operations alerts."
-  value       = var.enable_slack_alerts ? aws_chatbot_slack_channel_configuration.edge_ops_alerts[0].chat_configuration_arn : null
-}
-
 output "cloudfront_waf_web_acl_arn" {
   description = "CloudFront-scope WAF web ACL ARN for the Baselink dev distribution."
   value       = aws_wafv2_web_acl.cloudfront.arn
