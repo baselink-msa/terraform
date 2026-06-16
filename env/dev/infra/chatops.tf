@@ -42,24 +42,6 @@ resource "aws_iam_role" "chatbot_slack" {
   })
 }
 
-resource "aws_chatbot_slack_channel_configuration" "edge_ops_alerts" {
-  provider = aws.use1
-  count    = var.enable_slack_alerts ? 1 : 0
-
-  configuration_name          = "${local.name_prefix}-edge-ops-alerts"
-  iam_role_arn                = aws_iam_role.chatbot_slack[0].arn
-  slack_team_id               = var.slack_workspace_id
-  slack_channel_id            = var.slack_channel_id
-  sns_topic_arns              = [aws_sns_topic.edge_ops_alerts[0].arn]
-  guardrail_policy_arns       = ["arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"]
-  logging_level               = "ERROR"
-  user_authorization_required = true
-
-  tags = merge(local.common_tags, {
-    Purpose = "edge-chatops"
-  })
-}
-
 resource "aws_iam_role_policy" "chatbot_slack_readonly" {
   count = var.enable_slack_alerts ? 1 : 0
 
@@ -103,7 +85,7 @@ resource "aws_chatbot_slack_channel_configuration" "ops_alerts" {
   iam_role_arn                = aws_iam_role.chatbot_slack[0].arn
   slack_team_id               = var.slack_workspace_id
   slack_channel_id            = var.slack_channel_id
-  sns_topic_arns              = [aws_sns_topic.ops_alerts[0].arn]
+  sns_topic_arns              = [aws_sns_topic.ops_alerts[0].arn, aws_sns_topic.edge_ops_alerts[0].arn]
   guardrail_policy_arns       = ["arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"]
   logging_level               = "ERROR"
   user_authorization_required = true

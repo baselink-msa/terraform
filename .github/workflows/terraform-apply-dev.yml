@@ -104,6 +104,12 @@ jobs:
           terraform init -input=false
           terraform apply -auto-approve -input=false
 
+      - name: Terraform apply cloudfront
+        working-directory: env/dev/cloudfront
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+
       - name: Run post apply tasks
         env:
           CF_ORIGIN_VERIFY_HEADER_NAME: ${{ secrets.CF_ORIGIN_VERIFY_HEADER_NAME }}
