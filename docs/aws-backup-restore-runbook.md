@@ -338,3 +338,64 @@ Restore job ID:
 - 전체 DR 전략: `docs/disaster-recovery-strategy.md`
 - RDS PITR Runbook: `modules/rds/RUNBOOK.md`
 - RDS 모듈 설명: `modules/rds/README.md`
+
+## 15. 실제 복구 리허설 결과 - 2026-06-16
+
+2026-06-16에 AWS Backup recovery point를 사용해 임시 RDS 복구 리허설을 수행했습니다.
+
+테스트 개요:
+
+- 수행자: Data & Async Processing 담당
+- 백업 vault: `baselink-dev-backup-vault`
+- Recovery point ARN: `arn:aws:rds:ap-northeast-2:740831361032:snapshot:awsbackup:job-4f2de47f-ec5b-44fa-b6bf-b17237ee958b`
+- Recovery point 생성 시각: 2026-06-16 11:43:37 KST
+- Restore job ID: `ac3abb77-f3fa-41c7-a5c4-2d94bbb7bbe1`
+- 복원 DB identifier: `baselink-dev-postgres-restore-20260616`
+- 복원 DB endpoint: `baselink-dev-postgres-restore-20260616.cves8emympgn.ap-northeast-2.rds.amazonaws.com`
+- 복원 완료 시각: 2026-06-16 15:50:55 KST
+- Restore job 결과: `COMPLETED`
+
+복원 옵션:
+
+- `DBInstanceClass`: `db.t4g.micro`
+- `MultiAZ`: `false`
+- `DeletionProtection`: `false`
+- `PubliclyAccessible`: `false`
+- `DBSubnetGroupName`: `baselink-dev-rds`
+- `VpcSecurityGroupIds`: `["sg-0333b09e68319fd15"]`
+
+검증 결과:
+
+- EKS 내부 `baselink-dev` namespace에서 임시 `postgres:16-alpine` Pod로 복원 DB 접속 성공
+- database: `baseball_platform`
+- user: `baseball`
+- 확인된 schema/table 수:
+  - `auth_schema`: 2 tables
+  - `chatbot_schema`: 1 table
+  - `game_schema`: 3 tables
+  - `ticket_schema`: 5 tables
+- 주요 데이터 row count:
+  - `auth_schema.users`: 5
+  - `chatbot_schema.faq`: 7
+  - `game_schema.games`: 3
+  - `game_schema.seat_sections`: 25
+  - `game_schema.stadiums`: 5
+  - `ticket_schema.seats`: 1000
+  - `ticket_schema.game_seats`: 600
+  - `ticket_schema.reservations`: 8
+- 경기 샘플 데이터 확인:
+  - `두산 베어스` vs `LG 트윈스`, `TICKET_OPEN`, 2026-06-01 18:30
+  - `KIA 타이거즈` vs `삼성 라이온즈`, `SCHEDULED`, 2026-06-03 18:30
+  - `KIA Tigers` vs `LG Twins`, `SCHEDULED`, 2026-06-05 15:41
+
+정리 결과:
+
+- 임시 복원 DB 삭제 요청 완료
+- 최종 확인 시 `DBInstanceNotFound` 응답으로 삭제 완료 확인
+- 운영 RDS인 `baselink-dev-postgres`에는 endpoint 전환이나 데이터 변경을 수행하지 않았습니다.
+
+리허설 중 확인한 Runbook 보완 포인트:
+
+- PowerShell에서 `aws backup start-restore-job --metadata`에 인라인 JSON을 넘기면 따옴표가 깨질 수 있습니다.
+- Windows PowerShell에서는 복구 metadata를 임시 JSON 파일로 저장한 뒤 `--metadata file://<path>` 형식으로 전달하는 방식이 더 안정적입니다.
+- PowerShell의 `$Host`는 예약 변수이므로 DB endpoint 변수명으로는 `$dbHost` 같은 이름을 사용합니다.
