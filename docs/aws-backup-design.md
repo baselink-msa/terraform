@@ -195,6 +195,8 @@ dev 비용 절감 원칙:
 8. restore instance 삭제
 ```
 
+상세 복구 절차는 `docs/aws-backup-restore-runbook.md`를 따릅니다.
+
 ## 10. Cross-Region DR 확장안
 
 초기 구현에서는 cross-region copy를 비활성화합니다.
