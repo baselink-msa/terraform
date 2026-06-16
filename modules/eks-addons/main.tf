@@ -144,6 +144,20 @@ resource "helm_release" "aws_load_balancer_controller" {
 }
 
 #==============================================================================
+# 0.5) Stakater Reloader 설치
+#      Secret/ConfigMap 변경 시 annotation이 붙은 Deployment를 자동 재시작한다.
+#==============================================================================
+resource "helm_release" "reloader" {
+  name             = "reloader"
+  namespace        = var.reloader_namespace
+  create_namespace = true
+
+  repository = "https://stakater.github.io/stakater-charts"
+  chart      = "reloader"
+  version    = var.reloader_version
+}
+
+#==============================================================================
 # 1) Karpenter 컨트롤러 IAM 역할 (IRSA)
 #    Karpenter 파드가 EC2를 run/terminate 하기 위한 권한
 #==============================================================================

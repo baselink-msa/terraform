@@ -57,6 +57,12 @@ variable "aws_load_balancer_controller_version" {
   default     = "1.14.0"
 }
 
+variable "reloader_version" {
+  description = "Stakater Reloader Helm chart version. Null uses the chart repository default."
+  type        = string
+  default     = null
+}
+
 
 #--- 네임스페이스 ------------------------------------------------------------
 variable "karpenter_namespace" {
@@ -87,6 +93,12 @@ variable "aws_load_balancer_controller_namespace" {
   description = "Namespace for AWS Load Balancer Controller."
   type        = string
   default     = "kube-system"
+}
+
+variable "reloader_namespace" {
+  description = "Namespace for Stakater Reloader."
+  type        = string
+  default     = "reloader"
 }
 
 #--- Spot SLR ----------------------------------------------------------------

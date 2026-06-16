@@ -38,28 +38,58 @@ else
   warn "cluster_name output을 못 읽었어요. 수동으로 kubeconfig 설정하세요."
 fi
 
-log "backend-secret 확인 중..."
+log "backend-secret 동기화 중..."
 kubectl create namespace baselink-dev 2>/dev/null || true
 
-if ! kubectl get secret backend-secret -n baselink-dev >/dev/null 2>&1; then
-  log "backend-secret 생성 중..."
-  RDS_SECRET_ARN=$(aws rds describe-db-instances --db-instance-identifier baselink-dev-postgres --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text 2>/dev/null || echo "")
-  if [ -n "$RDS_SECRET_ARN" ] && [ "$RDS_SECRET_ARN" != "None" ]; then
-    RDS_CREDS=$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET_ARN" --query 'SecretString' --output text)
-    DB_USER=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
-    DB_PASS=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+RDS_SECRET_ARN=$(aws rds describe-db-instances --db-instance-identifier baselink-dev-postgres --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text 2>/dev/null || echo "")
+if [ -n "$RDS_SECRET_ARN" ] && [ "$RDS_SECRET_ARN" != "None" ]; then
+  RDS_CREDS=$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET_ARN" --query 'SecretString' --output text)
+  DB_USER=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+  DB_PASS=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+else
+  DB_USER="baseball"
+  DB_PASS="baseball"
+  warn "Secrets Manager에서 RDS 비밀번호를 못 찾았어요. 기본값 사용."
+fi
+
+BACKEND_SECRET_HASH=$(DB_USER="$DB_USER" DB_PASS="$DB_PASS" python3 -c "import hashlib, os; print(hashlib.sha256((os.environ['DB_USER'] + ':' + os.environ['DB_PASS']).encode()).hexdigest())")
+CURRENT_BACKEND_SECRET_HASH=$(kubectl get secret backend-secret -n baselink-dev -o jsonpath='{.metadata.annotations.baselink\.io/db-secret-hash}' 2>/dev/null || echo "")
+BACKEND_SECRET_UPDATED=false
+
+CURRENT_JWT_SECRET=$(kubectl get secret backend-secret -n baselink-dev -o jsonpath='{.data.APP_JWT_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+if [ -z "$CURRENT_JWT_SECRET" ]; then
+  CURRENT_JWT_SECRET="$(openssl rand -base64 48)"
+fi
+
+if [ "$CURRENT_BACKEND_SECRET_HASH" != "$BACKEND_SECRET_HASH" ]; then
+  if [ -z "$CURRENT_BACKEND_SECRET_HASH" ]; then
+    log "backend-secret 생성 또는 hash annotation 추가 중..."
   else
-    DB_USER="baseball"
-    DB_PASS="baseball"
-    warn "Secrets Manager에서 RDS 비밀번호를 못 찾았어요. 기본값 사용."
+    log "backend-secret DB credential 변경 감지. 최신 RDS Secret 값으로 갱신 중..."
   fi
+
+  SECRET_FILE=$(mktemp)
   kubectl create secret generic backend-secret -n baselink-dev \
     --from-literal=SPRING_DATASOURCE_USERNAME="$DB_USER" \
     --from-literal=SPRING_DATASOURCE_PASSWORD="$DB_PASS" \
-    --from-literal=APP_JWT_SECRET="$(openssl rand -base64 48)"
-  log "backend-secret 생성 완료"
+    --from-literal=APP_JWT_SECRET="$CURRENT_JWT_SECRET" \
+    --dry-run=client -o yaml > "$SECRET_FILE"
+
+  kubectl annotate --local -f "$SECRET_FILE" \
+    "baselink.io/db-secret-hash=$BACKEND_SECRET_HASH" \
+    -o yaml | kubectl apply -f - >/dev/null
+  rm -f "$SECRET_FILE"
+
+  BACKEND_SECRET_UPDATED=true
+  log "backend-secret 동기화 완료"
 else
-  log "backend-secret 이미 존재"
+  log "backend-secret 최신 상태"
+fi
+
+if [ "$BACKEND_SECRET_UPDATED" = "true" ]; then
+  log "backend-secret 변경 감지. Reloader가 annotation된 backend deployment를 자동 재시작합니다."
+else
+  log "backend-secret 변경 없음. Reloader 재시작 불필요"
 fi
 
 log "Argo CD git-ops sync 대기 중..."
