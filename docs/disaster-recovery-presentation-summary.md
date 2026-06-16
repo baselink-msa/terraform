@@ -157,7 +157,109 @@ Pilot Light 전략:
 
 > Baselink의 데이터 계층은 RDS Multi-AZ, Valkey failover, SQS DLQ로 장애를 흡수하고, PITR과 AWS Backup으로 데이터 복구 지점을 확보했습니다. 특히 AWS Backup recovery point에서 임시 RDS를 실제 복구하고 EKS 내부에서 데이터를 검증해, 백업이 실제 복구 가능한 상태임을 확인했습니다.
 
-## 9. 향후 개선 계획
+## 9. 지금까지 완료한 고도화 작업
+
+아래 항목은 발표에서 "처음에는 수동 운영에 가까웠지만, 점진적으로 안정성과 복구 가능성을 높였다"는 흐름으로 설명할 수 있습니다.
+
+| 작업 | 문제 의식 | 개선 결과 | 발표 포인트 |
+| --- | --- | --- | --- |
+| Flyway 기반 DB migration/seed 구조 정리 | RDS를 재생성하면 schema와 초기 데이터가 사라짐 | schema/table/seed 데이터를 반복 가능하게 적용 | DB 초기화가 사람의 기억이 아니라 코드와 migration 이력으로 관리됨 |
+| RDS Multi-AZ 활성화 | DB 인스턴스/AZ 장애 시 서비스 중단 위험 | standby 인스턴스로 failover 가능 | 인스턴스 장애와 AZ 장애를 인프라 차원에서 흡수 |
+| RDS deletion protection/final snapshot | 실수로 RDS가 삭제될 위험 | 삭제 보호와 최종 스냅샷으로 안전장치 추가 | `terraform destroy`나 실수 삭제로부터 핵심 데이터 보호 |
+| RDS automated backup/PITR | 논리적 장애나 실수 삭제 시 복구 지점 필요 | 7일 보존 기반 특정 시점 복구 가능 | Multi-AZ는 장애 대응, PITR은 데이터 오염 대응이라는 차이를 설명 가능 |
+| AWS Backup 도입 | RDS 백업 정책을 중앙에서 관리할 필요 | Backup vault/plan/selection으로 daily snapshot 관리 | DR 리전 cross-region copy로 확장 가능한 기반 마련 |
+| AWS Backup restore 리허설 | 백업이 실제로 복구 가능한지 검증 필요 | 임시 RDS 복구, EKS 내부 접속, row count 검증 완료 | 단순 설정이 아니라 실제 복구 가능성을 증명 |
+| Redis에서 Valkey로 전환 | Redis 호환 오픈소스 캐시 엔진 기반 정리 | Valkey 8.2 기반 ElastiCache 구성 | 대기열/좌석 lock/캐시 계층을 최신 Redis 호환 엔진으로 운영 |
+| Valkey Multi-AZ/failover | 캐시 primary 장애 시 대기열/lock 계층 영향 | replica와 automatic failover 구성 | 캐시 계층도 단일 장애점이 되지 않게 설계 |
+| SQS DLQ/redrive 구성 | worker 실패 메시지가 유실되거나 정상 처리를 막을 위험 | 실패 메시지를 DLQ로 격리하고 redrive 가능 | 실패를 버리지 않고 격리 후 재처리하는 비동기 안정성 확보 |
+| SQS backlog/DLQ alarm | 큐 적체와 실패 메시지를 늦게 발견할 위험 | CloudWatch Alarm과 Slack 알림 구성 | 처리 지연과 최종 실패를 조기에 감지 |
+| RDS/Valkey alarm | CPU, memory, connection, eviction, replication lag 이상 감지 필요 | 주요 지표 기반 CloudWatch Alarm 구성 | 장애 발생 전 이상 징후를 관측 가능 |
+| Amazon Q Developer Slack 연동 | AWS 콘솔을 직접 보지 않으면 알람 인지가 느림 | CloudWatch Alarm을 Slack 채널로 전달 | 팀 전체가 같은 채널에서 장애/복구 알림 확인 |
+| KEDA용 DB reader 권한 분리 | KEDA가 관리자 계정으로 DB를 조회하면 권한이 과함 | `keda_reader` 계정과 `postgres-keda-secret`로 읽기 전용 접근 | autoscaling 조회도 최소 권한 원칙으로 관리 |
+| KEDA SQS scaler IAM 권한 정리 | 실제 KEDA가 사용하는 IAM Role과 문서/권한 위치가 혼동됨 | Pod Identity Role 기준으로 SQS 조회 권한 필요성을 문서화 | Kubernetes autoscaling과 AWS IAM 연결 구조를 이해하고 정리 |
+
+## 10. 발표 가능한 트러블슈팅
+
+사소한 명령어 실수보다, 설계 판단이나 운영 안정성으로 이어진 트러블슈팅만 발표 소재로 사용합니다.
+
+### 10.1 Flyway seed 데이터 전환 후 화면 데이터가 달라진 문제
+
+상황:
+
+- 기존 `seed-dev.sql`과 Flyway repeatable seed의 데이터가 달라 브라우저 화면의 경기/좌석/구역/메뉴가 영어로 보였습니다.
+- 좌석 선택 화면에서 기대한 구역별 좌석 배치가 나오지 않는 문제도 확인했습니다.
+
+해결:
+
+- 기존 한글 dev seed 데이터와 실제 화면에서 필요한 좌석/경기좌석 구조를 Flyway seed 기준으로 맞췄습니다.
+- 복구 후에는 경기 목록, 좌석 선택, 관리자 기능이 정상 동작하는지 브라우저에서 확인했습니다.
+
+발표 포인트:
+
+> DB seed는 단순 테스트 데이터가 아니라 프론트 화면과 업무 흐름을 재현하는 기준 데이터입니다. Flyway 전환 과정에서 데이터 구조와 화면 동작을 함께 검증해, migration이 실제 서비스 동작까지 보장하도록 정리했습니다.
+
+### 10.2 Terraform apply가 Kubernetes Secret을 다시 덮어쓸 수 있는 문제
+
+상황:
+
+- 실제 EKS에는 `postgres-keda-secret`을 `keda_reader` 계정으로 바꿨지만, Terraform addon 코드는 여전히 관리자 계정 기준 Secret을 만들 수 있는 상태였습니다.
+- 이 상태에서 나중에 `terraform apply`가 실행되면 운영자가 수동으로 바꾼 Secret이 다시 관리자 계정으로 되돌아갈 수 있었습니다.
+
+해결:
+
+- 실제 클러스터 상태와 Terraform 코드의 desired state를 맞추는 방향으로 정리했습니다.
+- KEDA는 필요한 테이블만 읽을 수 있는 `keda_reader` 계정과 전용 Secret을 사용하도록 했습니다.
+
+발표 포인트:
+
+> Kubernetes에서 수동 변경은 당장 동작하게 만들 수 있지만, Terraform이 관리하는 리소스라면 다음 apply 때 덮어써질 수 있습니다. 그래서 실제 상태와 IaC 코드를 일치시켜 운영 드리프트를 줄였습니다.
+
+### 10.3 AWS Backup restore는 기존 DB를 되감는 작업이 아니라 새 DB를 만드는 작업
+
+상황:
+
+- 백업 복구를 처음 이해할 때 기존 운영 RDS가 바로 과거 시점으로 되돌아가는 것으로 오해할 수 있습니다.
+
+정리:
+
+- AWS Backup restore와 RDS PITR은 기존 DB를 직접 덮어쓰지 않고, Recovery Point 또는 특정 시점 기준으로 새 RDS 인스턴스를 생성합니다.
+- 복구된 DB를 검증한 뒤 일부 데이터만 복구할지, endpoint를 전환할지 결정합니다.
+
+발표 포인트:
+
+> 복구는 곧바로 운영 DB를 바꾸는 위험한 작업이 아니라, 새 DB를 복원하고 검증한 뒤 전환 여부를 판단하는 절차로 설계했습니다.
+
+### 10.4 AWS Backup restore 리허설 중 PowerShell JSON 전달 문제
+
+상황:
+
+- `aws backup start-restore-job --metadata`에 인라인 JSON을 넘길 때 PowerShell에서 따옴표가 깨져 AWS CLI가 JSON을 파싱하지 못했습니다.
+
+해결:
+
+- metadata를 임시 JSON 파일로 저장한 뒤 `--metadata file://<path>` 형식으로 전달해 Restore Job을 정상 시작했습니다.
+
+발표 포인트:
+
+> 실제 리허설을 해보면서 문서만으로는 드러나지 않는 CLI/운영 환경 차이를 발견했고, Windows PowerShell 기준으로 안정적인 복구 명령 방식을 Runbook에 반영했습니다.
+
+### 10.5 KEDA 권한은 "권한이 있는 Role"이 아니라 "실제로 Pod가 사용하는 Role"에 있어야 하는 문제
+
+상황:
+
+- KEDA SQS scaler가 큐 길이를 읽으려면 SQS 조회 권한이 필요합니다.
+- 단순히 어떤 IAM Role에 권한을 추가하는 것만으로는 부족하고, KEDA operator Pod가 실제로 사용하는 Role에 권한이 있어야 합니다.
+
+정리:
+
+- dev 환경에서는 KEDA operator가 EKS Pod Identity Association을 통해 `curve-keda-cloudwatch` Role을 사용하는 구조로 정리했습니다.
+- 따라서 CloudWatch metric 조회 권한과 SQS queue 조회 권한은 같은 실제 실행 Role 기준으로 관리해야 합니다.
+
+발표 포인트:
+
+> Kubernetes autoscaling과 AWS IAM은 연결 지점이 중요합니다. 권한을 추가했는지가 아니라, 실제 Pod가 그 권한을 가진 Role로 AWS API를 호출하는지가 핵심이라는 점을 정리했습니다.
+
+## 11. 향후 개선 계획
 
 | 개선 항목 | 목적 | 우선순위 |
 | --- | --- | --- |
