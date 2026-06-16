@@ -113,7 +113,8 @@ iac
 후처리 스크립트는 다음 작업을 담당한다.
 
 - kubeconfig 업데이트
-- `backend-secret` 생성 또는 확인
+- `backend-secret`을 RDS Secrets Manager 값과 동기화
+- DB credential 변경 시 Reloader가 `backend-secret`을 사용하는 backend deployment 자동 재시작
 - Argo CD sync 대기
 - ALB Ingress에 CloudFront prefix list, WAF, origin header 조건 annotation 적용
 - auth-service rollout 대기
