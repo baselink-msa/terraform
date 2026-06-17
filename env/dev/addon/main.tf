@@ -201,6 +201,33 @@ resource "aws_iam_role_policy_attachment" "yace_cloudwatch" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
 }
 
+resource "aws_iam_role_policy" "yace_tagging" {
+  name = "yace-resource-tagging"
+  role = aws_iam_role.yace.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "TagDiscovery"
+        Effect   = "Allow"
+        Action   = [
+          "tag:GetResources",
+          "tag:GetTagKeys",
+          "tag:GetTagValues"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "AccountAlias"
+        Effect   = "Allow"
+        Action   = ["iam:ListAccountAliases"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "kubectl_manifest" "baselink_application" {
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
