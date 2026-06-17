@@ -57,14 +57,14 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
 
 resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   alarm_name          = "${local.name_prefix}-rds-connections-high"
-  alarm_description   = "RDS DatabaseConnections is high for the dev PostgreSQL instance."
+  alarm_description   = "RDS DatabaseConnections is approaching the safe app connection budget for the dev PostgreSQL instance."
   namespace           = "AWS/RDS"
   metric_name         = "DatabaseConnections"
   statistic           = "Average"
   period              = 300
   evaluation_periods  = 2
   datapoints_to_alarm = 2
-  threshold           = 80
+  threshold           = 60
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
 
