@@ -135,19 +135,36 @@ floor(60 / 3) = 20 pods
 
 모든 서비스에 같은 pool size를 주는 것보다, 서비스 역할에 따라 다르게 주는 것이 좋습니다.
 
-| 서비스 | 성격 | 권장 max pool | 이유 |
-| --- | --- | ---: | --- |
-| `auth-service` | 로그인/회원 | 2~3 | 트래픽은 있지만 예매 핵심 DB 쓰기보다 우선순위 낮음 |
-| `game-service` | 경기/좌석 조회 | 2~3 | 조회 중심, read replica 도입 전까지 RDS 부담 주의 |
-| `waiting-room-service` | 대기열 정책 조회 + Redis 중심 | 1~2 | 주 역할은 Redis 대기열, DB는 정책 조회용 |
-| `ticket-service` | 예매 요청/예약 생성 | 3~5 | 핵심 쓰기 경로, 단 connection budget 내에서 우선 배정 |
-| `ticket-worker-service` | SQS 메시지 처리 | 2~4 | worker concurrency와 함께 조절 필요 |
-| `seat-lock-service` | 좌석 선점/상태 | 2~3 | Valkey 중심으로 가는 것이 바람직 |
-| `admin-service` | 관리자 기능 | 1~2 | 트래픽 낮음, pool 크게 둘 필요 없음 |
-| `order-service` | 주문/결제 단계 | 2~3 | 결제 단계 트래픽은 funnel 후반 |
-| `ai-chatbot-service` | FAQ/AI 보조 | 1~2 | 장애 시 예매 핵심 기능보다 우선순위 낮음 |
+| 서비스 | 성격 | 권장 max pool | 권장 min idle | 이유 |
+| --- | --- | ---: | ---: | --- |
+| `auth-service` | 로그인/회원 | 2 | 1 | 트래픽은 있지만 예매 핵심 DB 쓰기보다 우선순위 낮음 |
+| `game-service` | 경기/좌석 조회 | 2 | 1 | 조회 중심, read replica 도입 전까지 RDS 부담 주의 |
+| `waiting-room-service` | 대기열 정책 조회 + Redis 중심 | 1 | 0~1 | 주 역할은 Redis 대기열, DB는 정책 조회용 |
+| `ticket-service` | 예매 요청/예약 생성 | 4 | 1 | 핵심 쓰기 경로, connection budget 내에서 우선 배정 |
+| `ticket-worker-service` | SQS 메시지 처리 | 3 | 1 | worker concurrency와 함께 조절 필요 |
+| `seat-lock-service` | 좌석 선점/상태 | 2 | 1 | Valkey 중심으로 가는 것이 바람직 |
+| `admin-service` | 관리자 기능 | 1 | 0~1 | 트래픽 낮음, pool 크게 둘 필요 없음 |
+| `order-service` | 주문/결제 단계 | 2 | 1 | 결제 단계 트래픽은 funnel 후반 |
+| `ai-chatbot-service` | FAQ/AI 보조 | 1 | 0~1 | 장애 시 예매 핵심 기능보다 우선순위 낮음 |
 
 dev에서는 우선 공통 `3`을 유지하되, 다음 고도화 단계에서 서비스별 환경변수로 분리하는 것을 권장합니다.
+
+서비스별 분리 후에는 아래처럼 service별 environment variable을 다르게 주입하는 구조를 권장합니다.
+
+```yaml
+env:
+  - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+    value: "4"
+  - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+    value: "1"
+```
+
+적용 위치:
+
+- 공통 기본값: Terraform addon `backend-config`
+- 서비스별 override: GitOps `base/workloads.yaml`의 각 Deployment `env`
+
+이렇게 하면 대부분 서비스는 공통 기본값을 사용하고, 예매 핵심 서비스만 별도로 더 큰 pool을 받을 수 있습니다.
 
 ## 7. KEDA와 함께 보는 기준
 
@@ -224,9 +241,9 @@ pod당 처리량 = 20명/분
 
 ## 9. 운영 모니터링 기준
 
-현재 RDS connection alarm은 `DatabaseConnections >= 80` 기준입니다.
+현재 RDS connection alarm은 `DatabaseConnections >= 60` 기준입니다.
 
-하지만 현재 RDS `max_connections`가 79이므로, 이 threshold는 실제로는 너무 늦게 울릴 수 있습니다. dev 기준으로는 다음처럼 단계별로 보는 것을 권장합니다.
+이전 기준인 `80`은 현재 RDS `max_connections=79`보다 높아 실제 조기 경보로 의미가 약했습니다. dev 기준으로는 app connection budget에 맞춰 다음처럼 단계별로 보는 것을 권장합니다.
 
 | 단계 | 기준 | 의미 |
 | --- | --- | --- |
@@ -234,9 +251,9 @@ pod당 처리량 = 20명/분
 | 경고 | 55 connections 이상 | app budget에 근접, 대기열 입장량/worker 처리량 조정 검토 |
 | 위험 | 65 connections 이상 | 신규 connection 실패 가능성, KEDA max/pool/입장량 즉시 점검 |
 
-향후 Terraform alarm 개선안:
+현재 Terraform alarm 반영 사항:
 
-- dev RDS는 `DatabaseConnections >= 60` 정도로 낮추는 것을 검토합니다.
+- dev RDS는 `DatabaseConnections >= 60`으로 알람을 발생시킵니다.
 - 운영 환경은 RDS instance class와 `max_connections`에 맞춰 threshold를 계산합니다.
 - connection alarm이 울리면 대기열 `maxEnterPerMinute` 또는 pod당 입장 처리량을 낮추는 운영 절차를 둡니다.
 
@@ -286,7 +303,7 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 | 작업 | 목적 | 우선순위 |
 | --- | --- | --- |
 | 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 높음 |
-| RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 높음 |
+| RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 완료 |
 | connection 진단 스크립트 추가 | CloudWatch 알람 후 서비스별 connection 현황 자동 수집 | 중 |
 | 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 중 |
 | RDS Proxy 검토 | connection storm 완화 | 중 |
@@ -299,4 +316,3 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 - 서비스별 `replica x pool size`를 계산해 RDS connection budget 안에서 autoscaling을 설계했습니다.
 - 동적 대기열 admission control은 backend pod 수뿐 아니라 RDS 보호 전략과 함께 동작해야 합니다.
 - 향후에는 RDS connection 상태를 보고 대기열 입장량을 자동 조절하는 방향으로 고도화할 수 있습니다.
-

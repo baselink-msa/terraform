@@ -164,7 +164,7 @@ Pilot Light 전략:
 | --- | --- | --- |
 | RDS Read Replica 검토 | 경기/좌석 조회 트래픽 분산 | 중 |
 | 서비스별 Hikari pool size 분리 | scale-out 시 RDS connection 고갈 방지 | 높음 |
-| RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 높음 |
+| RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
 | AWS Backup cross-region copy | 서울 리전 장애 대비 | 중 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |
 | SQS SSE 명시 관리 | 메시지 암호화 정책 명확화 | 중 |
