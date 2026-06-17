@@ -156,6 +156,51 @@ resource "kubectl_manifest" "postgres_keda_secret" {
   depends_on = [kubectl_manifest.backend_namespace]
 }
 
+#==============================================================================
+# YACE CloudWatch Exporter — IRSA Role
+# monitoring 네임스페이스의 yace-cloudwatch-exporter SA가 CloudWatch를 읽을 수 있도록
+#==============================================================================
+locals {
+  yace_sa_name  = "yace-cloudwatch-exporter"
+  yace_sa_ns    = "monitoring"
+  oidc_url_bare = replace(data.terraform_remote_state.infra.outputs.eks_oidc_provider_url, "https://", "")
+}
+
+data "aws_iam_policy_document" "yace_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url_bare}:sub"
+      values   = ["system:serviceaccount:${local.yace_sa_ns}:${local.yace_sa_name}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url_bare}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "yace" {
+  name               = "baselink-dev-yace-cloudwatch-exporter"
+  assume_role_policy = data.aws_iam_policy_document.yace_assume.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "yace_cloudwatch" {
+  role       = aws_iam_role.yace.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
+}
+
 resource "kubectl_manifest" "baselink_application" {
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
