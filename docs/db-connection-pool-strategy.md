@@ -59,11 +59,23 @@ SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "3"
 SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "1"
 ```
 
+이 값은 기본값이고, GitOps `base/workloads.yaml`에서 Spring Boot 서비스별 override를 적용했습니다.
+
+| 서비스 | 현재 max pool | 현재 min idle |
+| --- | ---: | ---: |
+| `auth-service` | 2 | 1 |
+| `game-service` | 2 | 1 |
+| `admin-service` | 1 | 1 |
+| `waiting-room-service` | 1 | 1 |
+| `ticket-worker-service` | 3 | 1 |
+| `seat-lock-service` | 2 | 1 |
+| `ticket-service` | 4 | 1 |
+
 현재 의미:
 
-- 각 Spring Boot pod는 최대 3개의 DB connection을 사용할 수 있습니다.
-- 각 Spring Boot pod는 최소 1개의 idle connection을 유지할 수 있습니다.
-- 트래픽이 적어도 pod 수가 많으면 idle connection만으로도 RDS connection을 많이 사용할 수 있습니다.
+- 예매 핵심 쓰기 경로인 `ticket-service`에 가장 큰 pool을 배정했습니다.
+- 대기열/관리 서비스는 DB보다 Redis 또는 관리 기능 중심이므로 pool을 작게 유지합니다.
+- Python 서비스인 `order-service`, `ai-chatbot-service`는 Hikari 대상이 아니므로 별도 DB connection 정책이 필요합니다.
 
 ## 4. 현재 KEDA replica 기준
 
@@ -81,22 +93,18 @@ SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "1"
 | `order-service` | O, Python | 2 | 10 |
 | `ai-chatbot-service` | O, Python | 2 | 10 |
 
-Spring Boot 서비스만 단순 계산해도 다음과 같습니다.
+현재 서비스별 Hikari override를 반영해도, KEDA max replica가 대부분 `10`으로 유지되면 Spring Boot 서비스만 단순 계산해도 다음과 같습니다.
 
 ```text
-Spring DB pod 최대 수
-= auth 10
- + game 10
- + ticket 10
- + ticket-worker 10
- + seat-lock 10
- + waiting-room 10
- + admin 3
-= 63 pods
-
-최대 connection 가능성
-= 63 pods x Hikari max pool 3
-= 189 connections
+auth                 10 x 2 = 20
+game                 10 x 2 = 20
+ticket               10 x 4 = 40
+ticket-worker        10 x 3 = 30
+seat-lock            10 x 2 = 20
+waiting-room         10 x 1 = 10
+admin                 3 x 1 =  3
+--------------------------------
+Spring Boot 합계               143
 ```
 
 현재 RDS `max_connections`가 79이므로, 모든 서비스가 동시에 최대로 scale-out되고 각 pod가 pool을 모두 사용하면 RDS connection 한계를 초과할 수 있습니다.
@@ -123,13 +131,23 @@ dev 기준 권장 budget:
 모든 app pod의 최대 DB connection 합계 <= 60
 ```
 
-현재 Hikari max pool size가 `3`이면 안전하게 운영 가능한 Spring DB pod 수는:
+`60`은 고정값이 아니라 현재 dev RDS `db.t4g.micro`의 `max_connections=79`에서 운영 여유분을 뺀 값입니다. RDS instance class가 커지거나 DB parameter가 바뀌면 `max_connections`도 달라질 수 있으므로 app budget도 다시 계산해야 합니다.
+
+권장 계산식:
 
 ```text
-floor(60 / 3) = 20 pods
+app connection budget
+= RDS max_connections
+  - 운영/관리/마이그레이션/KEDA/점검 여유분
 ```
 
-즉 dev의 현재 RDS 크기에서는 DB를 사용하는 Spring Boot pod를 합산해 약 20개 수준으로 제한하는 것이 안전합니다.
+dev에서는 현재 다음처럼 잡습니다.
+
+```text
+79 - 19 = 60
+```
+
+운영에서는 RDS 여유분을 더 크게 잡는 것이 안전합니다.
 
 ## 6. 서비스별 권장 pool 전략
 
@@ -147,9 +165,7 @@ floor(60 / 3) = 20 pods
 | `order-service` | 주문/결제 단계 | 2 | 1 | 결제 단계 트래픽은 funnel 후반 |
 | `ai-chatbot-service` | FAQ/AI 보조 | 1 | 0~1 | 장애 시 예매 핵심 기능보다 우선순위 낮음 |
 
-dev에서는 우선 공통 `3`을 유지하되, 다음 고도화 단계에서 서비스별 환경변수로 분리하는 것을 권장합니다.
-
-서비스별 분리 후에는 아래처럼 service별 environment variable을 다르게 주입하는 구조를 권장합니다.
+서비스별 분리는 GitOps `base/workloads.yaml`의 각 Deployment `env`에 아래처럼 적용합니다.
 
 ```yaml
 env:
@@ -187,20 +203,69 @@ ticket-service 하나는 괜찮아 보이지만, ticket-worker, seat-lock, waiti
 3. `pool size x max replicas` 합계를 계산합니다.
 4. 합계가 app connection budget 60을 넘으면 조정합니다.
 
-예시 조정안:
+dev RDS app budget 60 기준의 KEDA maxReplicaCount 변경 제안은 다음과 같습니다.
 
 | 서비스 | max replicas | max pool | 최대 connection |
 | --- | ---: | ---: | ---: |
-| `ticket-service` | 8 | 4 | 32 |
-| `ticket-worker-service` | 5 | 3 | 15 |
+| `ticket-service` | 6 | 4 | 24 |
+| `ticket-worker-service` | 4 | 3 | 12 |
 | `seat-lock-service` | 4 | 2 | 8 |
 | `waiting-room-service` | 4 | 1 | 4 |
+| `auth-service` | 3 | 2 | 6 |
+| `game-service` | 2 | 2 | 4 |
 | `admin-service` | 2 | 1 | 2 |
-| 합계 |  |  | 61 |
+| 합계 |  |  | 60 |
 
-이런 방식으로 예매 핵심 경로에 connection budget을 우선 배정하고, 대기열/관리/보조 서비스는 낮게 유지합니다.
+이 변경안은 dev의 작은 RDS에서 connection 고갈을 막기 위한 보수적인 기준입니다.
 
-## 8. 동적 대기열과의 연결
+- `ticket-service`는 예매 확정 경로이므로 가장 큰 connection budget을 배정합니다.
+- `ticket-worker-service`는 SQS 적체를 처리하지만, DB가 병목이면 worker만 늘려도 장애가 커질 수 있어 `4`로 제한합니다.
+- `waiting-room-service`는 Redis 중심 서비스이므로 DB pool과 replica를 낮게 둡니다.
+- `auth-service`, `game-service`, `admin-service`는 예매 피크 때 핵심 쓰기 경로보다 낮은 우선순위로 둡니다.
+
+주의할 점:
+
+- Python 서비스인 `order-service`, `ai-chatbot-service`의 DB connection 수는 Hikari 계산에 포함되지 않았습니다. 두 서비스의 DB driver/pool 정책을 확인한 뒤 별도 budget을 잡아야 합니다.
+- KEDA 담당자의 예측 스케일링 쿼리가 반환하는 pod 수가 이 maxReplicaCount를 넘으면, 실제 replica는 maxReplicaCount에서 잘립니다.
+- 이 변경은 처리량을 무조건 줄이자는 의미가 아니라, 현재 dev RDS 크기에서 DB가 먼저 죽지 않도록 autoscaling 상한을 DB budget과 맞추자는 의미입니다.
+
+GitOps 변경안:
+
+| ScaledObject | 현재 maxReplicaCount | 제안 maxReplicaCount |
+| --- | ---: | ---: |
+| `ticket-service-scaler` | 10 | 6 |
+| `ticket-worker-scaler` | 10 | 4 |
+| `seat-lock-service-scaler` | 10 | 4 |
+| `waiting-room-service-scaler` | 10 | 4 |
+| `auth-service-scaler` | 10 | 3 |
+| `game-service-scaler` | 10 | 2 |
+| `admin-service-scaler` | 3 | 2 |
+
+`minReplicaCount=2`와 PDB가 적용되어 있으므로, `game-service`와 `admin-service`처럼 `maxReplicaCount=2`인 서비스는 최소 2개를 유지하되 그 이상으로는 늘리지 않는 구조가 됩니다.
+
+`order-service`, `ai-chatbot-service`는 별도 DB connection 정책을 확인하기 전까지 이번 Spring Boot Hikari budget 변경 범위에서 제외합니다.
+
+## 8. RDS instance class 판단 기준
+
+현재 dev RDS는 `db.t4g.micro`입니다.
+
+작은 팀 프로젝트 dev 환경에서는 비용을 아끼기 위해 `db.t4g.micro`를 유지하는 것이 합리적입니다. 다만 다음 조건 중 하나라도 반복되면 RDS class 상향을 검토해야 합니다.
+
+| 판단 기준 | 의미 | 권장 조치 |
+| --- | --- | --- |
+| `DatabaseConnections`가 55~60 근처에 자주 도달 | connection budget이 부족함 | KEDA max/pool/대기열 입장량 조정 후에도 반복되면 class 상향 |
+| CPU가 70~80% 이상으로 지속 | DB 연산 자체가 부족함 | 쿼리/인덱스 확인 후 class 상향 |
+| FreeableMemory 부족 또는 swap 증가 | 메모리 부족 | class 상향 우선 검토 |
+| 정상 쿼리인데 connection timeout 반복 | DB connection 수 또는 pool 구조 문제 | RDS Proxy, pool 조정, class 상향 검토 |
+| 조회 트래픽이 대부분 | primary DB보다 read 부하가 큼 | read replica 또는 cache 우선 검토 |
+
+결론:
+
+- 지금 당장 `db.t4g.micro`를 무조건 키우기보다는, dev에서는 KEDA maxReplicaCount와 Hikari pool을 먼저 budget 안에 맞춥니다.
+- 부하 테스트에서 connection/CPU/memory 중 무엇이 먼저 한계에 닿는지 확인한 뒤 instance class를 올리는 것이 설득력 있습니다.
+- 발표에서는 “작은 RDS를 쓴다”가 약점이 아니라, “작은 RDS의 한계를 계산하고 autoscaling 상한과 대기열 입장량으로 보호했다”가 어필 포인트입니다.
+
+## 9. 동적 대기열과의 연결
 
 대기열의 역할은 사용자를 줄 세우는 것만이 아니라, backend와 RDS를 보호하는 admission control입니다.
 
@@ -239,7 +304,7 @@ pod당 처리량 = 20명/분
 
 이 결과는 대기열 admission control이 관리자 상한과 Redis 분 단위 counter를 기준으로 동작하고 있음을 보여줍니다.
 
-## 9. 운영 모니터링 기준
+## 10. 운영 모니터링 기준
 
 현재 RDS connection alarm은 `DatabaseConnections >= 60` 기준입니다.
 
@@ -257,7 +322,7 @@ pod당 처리량 = 20명/분
 - 운영 환경은 RDS instance class와 `max_connections`에 맞춰 threshold를 계산합니다.
 - connection alarm이 울리면 대기열 `maxEnterPerMinute` 또는 pod당 입장 처리량을 낮추는 운영 절차를 둡니다.
 
-## 10. 장애 예방 운영 절차
+## 11. 장애 예방 운영 절차
 
 RDS connection이 높아질 때는 아래 순서로 확인합니다.
 
@@ -298,21 +363,24 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 - 서비스별 Hikari max pool size를 낮춥니다.
 - 반복되는 조회 부하는 cache 또는 read replica 도입을 검토합니다.
 
-## 11. 다음 고도화 작업
+## 12. 다음 고도화 작업
 
 | 작업 | 목적 | 우선순위 |
 | --- | --- | --- |
-| 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 높음 |
+| 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 완료 |
+| KEDA maxReplicaCount를 DB budget에 맞게 조정 | scale-out 상한을 RDS connection budget 안으로 제한 | 높음 |
+| Python 서비스 DB connection 정책 확인 | `order-service`, `ai-chatbot-service` connection budget 분리 | 높음 |
 | RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 완료 |
 | connection 진단 스크립트 추가 | CloudWatch 알람 후 서비스별 connection 현황 자동 수집 | 중 |
 | 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 중 |
 | RDS Proxy 검토 | connection storm 완화 | 중 |
 | Read Replica 검토 | 경기/좌석 조회 부하 분산 | 중 |
 
-## 12. 발표 포인트
+## 13. 발표 포인트
 
 - KEDA로 pod를 늘리는 것만으로는 안정성이 보장되지 않습니다.
 - RDS connection은 작은 dev RDS에서 가장 먼저 한계에 닿을 수 있는 병목입니다.
-- 서비스별 `replica x pool size`를 계산해 RDS connection budget 안에서 autoscaling을 설계했습니다.
+- 서비스별 `replica x pool size`를 계산해 RDS connection budget 안에서 autoscaling 상한을 설계했습니다.
+- `db.t4g.micro`의 `max_connections=79`를 기준으로 app budget을 약 60으로 잡고, 운영/마이그레이션/KEDA 점검 여유분을 남겼습니다.
 - 동적 대기열 admission control은 backend pod 수뿐 아니라 RDS 보호 전략과 함께 동작해야 합니다.
 - 향후에는 RDS connection 상태를 보고 대기열 입장량을 자동 조절하는 방향으로 고도화할 수 있습니다.
