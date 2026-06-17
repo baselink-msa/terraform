@@ -85,17 +85,22 @@ resource "kubectl_manifest" "backend_config" {
       namespace = "baselink-dev"
     }
     data = {
-      AWS_REGION                                 = var.aws_region
-      SPRING_CLOUD_AWS_REGION_STATIC             = var.aws_region
-      SPRING_CLOUD_AWS_SQS_ENDPOINT              = trimsuffix(data.terraform_remote_state.infra.outputs.ticket_confirm_queue_url, "/ticket-confirm-queue")
-      SQS_TICKET_CONFIRM_QUEUE_NAME              = "ticket-confirm-queue"
-      SPRING_DATASOURCE_URL                      = "jdbc:postgresql://${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform"
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "3"
-      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "1"
-      SPRING_JPA_HIBERNATE_DDL_AUTO              = "validate"
-      SPRING_DATA_REDIS_HOST                     = data.terraform_remote_state.infra.outputs.redis_primary_endpoint
-      SPRING_DATA_REDIS_PORT                     = "6379"
-      KNOWLEDGE_BASE_ID                          = "<bedrock-knowledge-base-id>"
+      AWS_REGION                                              = var.aws_region
+      SPRING_CLOUD_AWS_REGION_STATIC                          = var.aws_region
+      SPRING_CLOUD_AWS_SQS_ENDPOINT                           = trimsuffix(data.terraform_remote_state.infra.outputs.ticket_confirm_queue_url, "/ticket-confirm-queue")
+      SQS_TICKET_CONFIRM_QUEUE_NAME                           = "ticket-confirm-queue"
+      SPRING_DATASOURCE_URL                                   = "jdbc:postgresql://${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE              = "3"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE                   = "1"
+      SPRING_JPA_HIBERNATE_DDL_AUTO                           = "validate"
+      SPRING_DATA_REDIS_HOST                                  = data.terraform_remote_state.infra.outputs.redis_primary_endpoint
+      SPRING_DATA_REDIS_PORT                                  = "6379"
+      WAITING_ROOM_TICKET_SERVICE_NAME                        = "ticket-service"
+      WAITING_ROOM_TICKET_SERVICE_CAPACITY_PER_POD_PER_MINUTE = "20"
+      WAITING_ROOM_TICKET_SERVICE_FALLBACK_READY_PODS         = "1"
+      WAITING_ROOM_KUBERNETES_CAPACITY_ENABLED                = "true"
+      WAITING_ROOM_CAPACITY_CACHE_TTL_MS                      = "5000"
+      KNOWLEDGE_BASE_ID                                       = "<bedrock-knowledge-base-id>"
     }
   })
 
