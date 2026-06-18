@@ -703,6 +703,12 @@ resource "helm_release" "keda" {
     value = "true"
   }
 
+  # KEDA Metrics Server Prometheus 메트릭 활성화
+  set {
+    name  = "prometheus.metricServer.enabled"
+    value = "true"
+  }
+
   # ServiceMonitor 자동 생성 (Prometheus Operator가 자동 scrape)
   set {
     name  = "prometheus.operator.serviceMonitor.enabled"
@@ -710,6 +716,14 @@ resource "helm_release" "keda" {
   }
   set {
     name  = "prometheus.operator.serviceMonitor.additionalLabels.release"
+    value = "monitoring-stack"
+  }
+  set {
+    name  = "prometheus.metricServer.serviceMonitor.enabled"
+    value = "true"
+  }
+  set {
+    name  = "prometheus.metricServer.serviceMonitor.additionalLabels.release"
     value = "monitoring-stack"
   }
 
