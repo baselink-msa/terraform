@@ -41,6 +41,7 @@ KNOWN_SERVICE_ACTORS = {
     "eks.amazonaws.com": "EKS",
     "autoscaling.amazonaws.com": "Auto Scaling",
     "elasticloadbalancing.amazonaws.com": "ALB/ELB",
+    "load-balancer-controller": "ALB Controller",
     "rds.amazonaws.com": "RDS",
     "lambda.amazonaws.com": "Lambda",
     "cloudformation.amazonaws.com": "CloudFormation",
@@ -539,7 +540,7 @@ def lambda_handler(event, context):
             display_actor = extract_user_display_name(event_detail)
 
             # 1.5 자동화 컨트롤러 이벤트는 무조건 Low → Slack 안 보냄
-            AUTOMATION_ACTORS = {"Karpenter", "KEDA", "EKS", "Auto Scaling", "Lambda"}
+            AUTOMATION_ACTORS = {"Karpenter", "KEDA", "EKS", "Auto Scaling", "Lambda", "ALB Controller", "ALB/ELB"}
             if display_actor in AUTOMATION_ACTORS:
                 logger.info(f"Automation event ({display_actor}), skipping: {event_name}")
                 continue
