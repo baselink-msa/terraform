@@ -60,39 +60,77 @@ def classify_actor(event_detail: dict) -> str:
 # ─── 위험도 기본 분류 ────────────────────────────────────────────────────────────
 
 CRITICAL_PATTERNS = [
+    # Security Group: 0.0.0.0/0 인바운드 오픈
     ("AuthorizeSecurityGroupIngress", "0.0.0.0/0"),
-    ("PutBucketPolicy", ""),
-    ("PutBucketAcl", ""),
-    ("DeleteKey", ""),
+    ("AuthorizeSecurityGroupIngress", "::/0"),
+    # S3 Public Access
+    ("PutBucketPolicy", '"Effect":"Allow"'),
+    ("PutBucketAcl", "public"),
+    ("PutBucketPublicAccessBlock", '"value":false'),
+    ("DeleteBucketPublicAccessBlock", ""),
+    # KMS 키 삭제/비활성화
+    ("ScheduleKeyDeletion", ""),
     ("DisableKey", ""),
+    # Root 계정 사용
+    ("ConsoleLogin", "Root"),
 ]
 
 HIGH_EVENTS = [
+    # Security Group 변경
     "AuthorizeSecurityGroupIngress",
     "RevokeSecurityGroupIngress",
     "AuthorizeSecurityGroupEgress",
+    "RevokeSecurityGroupEgress",
+    "CreateSecurityGroup",
+    "DeleteSecurityGroup",
+    # IAM 정책/역할 변경
     "CreateRole",
     "DeleteRole",
     "PutRolePolicy",
+    "DeleteRolePolicy",
     "AttachRolePolicy",
+    "DetachRolePolicy",
+    "CreatePolicy",
+    "DeletePolicy",
+    "CreatePolicyVersion",
+    "CreateUser",
+    "DeleteUser",
+    "CreateAccessKey",
+    "UpdateAccessKey",
+    # S3
     "PutBucketPublicAccessBlock",
+    "DeleteBucketPolicy",
 ]
 
 MEDIUM_EVENTS = [
+    # RDS 설정 변경
     "ModifyDBInstance",
     "ModifyDBCluster",
     "CreateDBInstance",
     "DeleteDBInstance",
+    "RebootDBInstance",
+    # ElastiCache
+    "ModifyCacheCluster",
+    "ModifyReplicationGroup",
+    # EKS
+    "UpdateClusterConfig",
+    "UpdateNodegroupConfig",
+    # VPC/Network
+    "CreateRoute",
+    "DeleteRoute",
+    "ModifySubnetAttribute",
 ]
 
 
 def classify_severity(event_name: str, request_params: dict) -> str:
     """이벤트명과 요청 파라미터 기반으로 기본 위험도를 분류한다."""
-    params_str = json.dumps(request_params) if request_params else ""
+    params_str = json.dumps(request_params, ensure_ascii=False) if request_params else ""
 
+    # Critical: 패턴 매칭 (이벤트명 + 파라미터 내 위험 문자열)
     for pattern_event, pattern_value in CRITICAL_PATTERNS:
-        if event_name == pattern_event and pattern_value in params_str:
-            return "Critical"
+        if event_name == pattern_event:
+            if not pattern_value or pattern_value in params_str:
+                return "Critical"
 
     if event_name in HIGH_EVENTS:
         return "High"
@@ -135,28 +173,42 @@ def get_config_diff(resource_type: str, resource_id: str) -> dict | None:
 
 # ─── AI 요약 (Bedrock Claude) ────────────────────────────────────────────────────
 
-ANALYSIS_PROMPT = """당신은 AWS 인프라 보안 전문가입니다. 아래 CloudTrail 이벤트를 분석하고 운영자가 이해하기 쉽게 요약해주세요.
+ANALYSIS_PROMPT = """당신은 AWS 인프라 보안 및 운영 전문가입니다.
+아래 CloudTrail 이벤트를 분석하고, 운영자가 즉시 판단할 수 있도록 한국어로 요약해주세요.
 
 ## 이벤트 정보
 - 시간: {event_time}
 - 서비스: {event_source}
 - 이벤트: {event_name}
 - 호출자: {user_identity}
-- 호출 경로: {actor_type}
+- 호출 경로: {actor_type} (Terraform/Console/AWS CLI/SDK/Service 중 하나)
 - 소스 IP: {source_ip}
 - 리소스: {resources}
-- 요청 내용: {request_params}
+- 요청 파라미터: {request_params}
+- 환경: {environment}
 
 ## Config 변경 정보
 {config_diff}
 
-## 출력 형식 (JSON)
+## 위험도 판단 기준
+- Critical: 전체 인터넷(0.0.0.0/0) 노출, 암호화 키 삭제, S3 퍼블릭 오픈, Root 계정 사용
+- High: Security Group 변경, IAM 정책/역할 변경, 인증/권한 관련
+- Medium: RDS/ElastiCache 설정 변경, 네트워크 라우팅 변경
+- Low: 일반적인 리소스 생성/수정
+
+## 의도 추정 기준
+- 정상 변경: Terraform 또는 GitHub Actions에서 호출, CI/CD 파이프라인 패턴
+- 수동 변경: Console 또는 CLI에서 개인 IAM 사용자가 호출
+- 실수 가능성: dev 환경에서 의도하지 않았을 수 있는 넓은 범위 변경
+- 보안 위험: 외부 노출, 권한 상승, 암호화 비활성화
+
+## 출력 형식 (반드시 아래 JSON만 출력)
 {{
-  "summary": "한 줄 요약 (한국어)",
-  "detail": "상세 설명 (한국어, 2-3문장)",
+  "summary": "한 줄 요약 (30자 이내, 핵심만)",
+  "detail": "상세 설명 (2-3문장, 변경 내용과 영향 범위)",
   "severity": "Low | Medium | High | Critical",
   "intent": "정상 변경 | 수동 변경 | 실수 가능성 | 보안 위험",
-  "recommendation": "추천 대응 (한국어)"
+  "recommendation": "추천 대응 (구체적 행동 1-2가지)"
 }}
 
 JSON만 출력하세요."""
@@ -184,6 +236,7 @@ def ai_analyze(event_detail: dict, actor_type: str, config_diff: dict | None) ->
         resources=resources_str,
         request_params=json.dumps(event_detail.get("requestParameters", {}), ensure_ascii=False)[:500],
         config_diff=config_info,
+        environment=ENVIRONMENT,
     )
 
     try:

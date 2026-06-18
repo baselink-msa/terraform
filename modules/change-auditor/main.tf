@@ -94,13 +94,33 @@ resource "aws_sqs_queue_policy" "events" {
 
 resource "aws_cloudwatch_event_rule" "cloudtrail_changes" {
   name        = "${local.name_prefix}-cloudtrail-changes"
-  description = "Capture mutating CloudTrail events for change auditing"
+  description = "Capture mutating CloudTrail events for change auditing (Phase 1)"
 
   event_pattern = jsonencode({
-    source      = ["aws.ec2", "aws.iam", "aws.s3", "aws.rds", "aws.elasticache", "aws.eks", "aws.kms"]
+    source      = ["aws.ec2", "aws.iam", "aws.s3", "aws.rds", "aws.elasticache", "aws.eks", "aws.kms", "aws.elasticloadbalancing"]
     detail-type = ["AWS API Call via CloudTrail"]
     detail = {
       readOnly = [false]
+      eventName = [
+        { "prefix" : "Create" },
+        { "prefix" : "Delete" },
+        { "prefix" : "Update" },
+        { "prefix" : "Modify" },
+        { "prefix" : "Put" },
+        { "prefix" : "Attach" },
+        { "prefix" : "Detach" },
+        { "prefix" : "Authorize" },
+        { "prefix" : "Revoke" },
+        { "prefix" : "Add" },
+        { "prefix" : "Remove" },
+        { "prefix" : "Enable" },
+        { "prefix" : "Disable" },
+        { "prefix" : "Schedule" },
+        { "prefix" : "Run" },
+        { "prefix" : "Terminate" },
+        { "prefix" : "Stop" },
+        { "prefix" : "Reboot" }
+      ]
     }
   })
 
