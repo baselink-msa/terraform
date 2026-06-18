@@ -66,22 +66,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     }
   }
 
-  origin {
-    origin_id   = "grafana-origin"
-    domain_name = var.grafana_origin_domain_name
-
-    connection_attempts = 3
-    connection_timeout  = 10
-
-    custom_origin_config {
-      http_port                = 80
-      https_port               = 443
-      origin_keepalive_timeout = 5
-      origin_protocol_policy   = "http-only"
-      origin_read_timeout      = 30
-      origin_ssl_protocols     = ["SSLv3", "TLSv1", "TLSv1.1", "TLSv1.2"]
-    }
-  }
 
   default_cache_behavior {
     target_origin_id       = var.frontend_origin_id
@@ -105,7 +89,7 @@ resource "aws_cloudfront_distribution" "frontend" {
 
   ordered_cache_behavior {
     path_pattern             = "/grafana/*"
-    target_origin_id         = "grafana-origin"
+    target_origin_id         = var.api_origin_id
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods           = ["GET", "HEAD", "OPTIONS"]

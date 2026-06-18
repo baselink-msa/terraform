@@ -100,6 +100,12 @@ resource "kubectl_manifest" "backend_config" {
       WAITING_ROOM_TICKET_SERVICE_FALLBACK_READY_PODS         = "1"
       WAITING_ROOM_KUBERNETES_CAPACITY_ENABLED                = "true"
       WAITING_ROOM_CAPACITY_CACHE_TTL_MS                      = "5000"
+      WAITING_ROOM_DB_PRESSURE_ENABLED                        = "true"
+      WAITING_ROOM_DB_CONNECTION_BUDGET                       = "60"
+      WAITING_ROOM_DB_CAUTION_THRESHOLD                       = "40"
+      WAITING_ROOM_DB_WARNING_THRESHOLD                       = "50"
+      WAITING_ROOM_DB_CRITICAL_THRESHOLD                      = "55"
+      WAITING_ROOM_DB_PRESSURE_CACHE_TTL_MS                   = "5000"
       KNOWLEDGE_BASE_ID                                       = "<bedrock-knowledge-base-id>"
     }
   })
@@ -154,6 +160,78 @@ resource "kubectl_manifest" "postgres_keda_secret" {
   })
 
   depends_on = [kubectl_manifest.backend_namespace]
+}
+
+#==============================================================================
+# YACE CloudWatch Exporter — IRSA Role
+# monitoring 네임스페이스의 yace-cloudwatch-exporter SA가 CloudWatch를 읽을 수 있도록
+#==============================================================================
+locals {
+  yace_sa_name  = "yace-cloudwatch-exporter"
+  yace_sa_ns    = "monitoring"
+  oidc_url_bare = replace(data.terraform_remote_state.infra.outputs.eks_oidc_provider_url, "https://", "")
+}
+
+data "aws_iam_policy_document" "yace_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url_bare}:sub"
+      values   = ["system:serviceaccount:${local.yace_sa_ns}:${local.yace_sa_name}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_url_bare}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "yace" {
+  name               = "baselink-dev-yace-cloudwatch-exporter"
+  assume_role_policy = data.aws_iam_policy_document.yace_assume.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "yace_cloudwatch" {
+  role       = aws_iam_role.yace.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
+}
+
+resource "aws_iam_role_policy" "yace_tagging" {
+  name = "yace-resource-tagging"
+  role = aws_iam_role.yace.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TagDiscovery"
+        Effect = "Allow"
+        Action = [
+          "tag:GetResources",
+          "tag:GetTagKeys",
+          "tag:GetTagValues"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "AccountAlias"
+        Effect   = "Allow"
+        Action   = ["iam:ListAccountAliases"]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 resource "kubectl_manifest" "baselink_application" {
