@@ -696,18 +696,25 @@ resource "helm_release" "keda" {
     value = "NoSchedule"
   }
 
-  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
-  depends_on = [helm_release.aws_load_balancer_controller]
-
-  # Prometheus 메트릭 엔드포인트 활성화 (포트 9666)
+  # KEDA Operator Prometheus 메트릭 활성화
+  # 기본 포트 8080 사용 (gRPC Metrics Service 9666과 충돌 방지)
   set {
     name  = "prometheus.operator.enabled"
     value = "true"
   }
+
+  # ServiceMonitor 자동 생성 (Prometheus Operator가 자동 scrape)
   set {
-    name  = "prometheus.operator.port"
-    value = "9666"
+    name  = "prometheus.operator.serviceMonitor.enabled"
+    value = "true"
   }
+  set {
+    name  = "prometheus.operator.serviceMonitor.additionalLabels.release"
+    value = "monitoring-stack"
+  }
+
+  # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
+  depends_on = [helm_release.aws_load_balancer_controller]
 }
 
 #==============================================================================
