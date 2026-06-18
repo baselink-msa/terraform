@@ -100,6 +100,12 @@ resource "kubectl_manifest" "backend_config" {
       WAITING_ROOM_TICKET_SERVICE_FALLBACK_READY_PODS         = "1"
       WAITING_ROOM_KUBERNETES_CAPACITY_ENABLED                = "true"
       WAITING_ROOM_CAPACITY_CACHE_TTL_MS                      = "5000"
+      WAITING_ROOM_DB_PRESSURE_ENABLED                        = "true"
+      WAITING_ROOM_DB_CONNECTION_BUDGET                       = "60"
+      WAITING_ROOM_DB_CAUTION_THRESHOLD                       = "40"
+      WAITING_ROOM_DB_WARNING_THRESHOLD                       = "50"
+      WAITING_ROOM_DB_CRITICAL_THRESHOLD                      = "55"
+      WAITING_ROOM_DB_PRESSURE_CACHE_TTL_MS                   = "5000"
       KNOWLEDGE_BASE_ID                                       = "<bedrock-knowledge-base-id>"
     }
   })
@@ -209,9 +215,9 @@ resource "aws_iam_role_policy" "yace_tagging" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "TagDiscovery"
-        Effect   = "Allow"
-        Action   = [
+        Sid    = "TagDiscovery"
+        Effect = "Allow"
+        Action = [
           "tag:GetResources",
           "tag:GetTagKeys",
           "tag:GetTagValues"

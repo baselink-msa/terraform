@@ -269,17 +269,26 @@ GitOps 변경안:
 
 대기열의 역할은 사용자를 줄 세우는 것만이 아니라, backend와 RDS를 보호하는 admission control입니다.
 
-현재 waiting-room-service는 다음 방식으로 실제 입장 허용량을 계산합니다.
+waiting-room-service의 기본 처리량은 다음 방식으로 계산합니다.
 
 ```text
-실제 입장 허용량
+기본 입장 허용량
 = min(관리자 maxEnterPerMinute, ticket-service Ready Pod 수 x pod당 처리량)
+```
+
+여기에 RDS connection 압력에 따른 감속률을 적용합니다.
+
+```text
+최종 입장 허용량
+= 기본 입장 허용량 x RDS connection 감속률
 ```
 
 현재 설정:
 
 ```text
 WAITING_ROOM_TICKET_SERVICE_CAPACITY_PER_POD_PER_MINUTE = 20
+WAITING_ROOM_DB_CONNECTION_BUDGET = 60
+WAITING_ROOM_DB_PRESSURE_CACHE_TTL_MS = 5000
 ```
 
 예시:
@@ -290,19 +299,42 @@ pod당 처리량 = 20명/분
 시스템 처리 가능량 = 40명/분
 
 관리자 maxEnterPerMinute = 10
-실제 입장 허용량 = min(10, 40) = 10명/분
+기본 입장 허용량 = min(10, 40) = 10명/분
+
+RDS connections = 14
+감속률 = 100%
+최종 입장 허용량 = 10 x 100% = 10명/분
 ```
 
-2026-06-17 테스트 결과:
+RDS connection 감속 단계:
+
+| 단계 | RDS connections | 감속률 | 기본 100명/분일 때 |
+| --- | ---: | ---: | ---: |
+| `NORMAL` | 0~39 | 100% | 100명/분 |
+| `CAUTION` | 40~49 | 75% | 75명/분 |
+| `WARNING` | 50~54 | 50% | 50명/분 |
+| `CRITICAL` | 55~59 | 25% | 25명/분 |
+| `STOP` | 60 이상 | 0% | 신규 입장 일시 중지 |
+
+구현 방식:
+
+- `pg_stat_database.numbackends`에서 현재 database connection 수를 조회합니다.
+- 대기열 상태 요청마다 DB를 조회하지 않고 5초 동안 결과를 캐시합니다.
+- connection 조회가 실패하면 신규 입장을 일시 중지하는 fail-closed 방식으로 DB를 보호합니다.
+- 현재 connection 수, 감속률, 압력 단계를 waiting-room API와 Prometheus metric으로 노출합니다.
+- 이미 발급된 token과 진행 중인 예약을 강제로 종료하지 않고, 신규 입장 속도만 줄입니다.
+
+대기열 분당 입장과 token TTL 분리 검증:
 
 | 테스트 | 결과 |
 | --- | --- |
-| gameId `1` 정책 | `maxEnterPerMinute=10`, `tokenTtlSeconds=300` |
-| 테스트 사용자 수 | 15 |
-| 토큰 발급 성공 | 10 |
-| 429 제한 응답 | 5 |
+| 수행일 | 2026-06-18 |
+| gameId `1` 정책 | `maxEnterPerMinute=1`, `tokenTtlSeconds=300` |
+| 첫 사용자 | 즉시 입장 및 token 발급 |
+| 같은 분의 두 번째 사용자 | `currentMinuteRemainingSlots=0`, 대기 |
+| 다음 분의 두 번째 사용자 | 첫 token TTL이 남아 있어도 즉시 입장 가능 |
 
-이 결과는 대기열 admission control이 관리자 상한과 Redis 분 단위 counter를 기준으로 동작하고 있음을 보여줍니다.
+이 결과는 분당 입장 수와 좌석 선택 token TTL이 서로 독립적으로 동작함을 보여줍니다.
 
 ## 10. 운영 모니터링 기준
 
@@ -312,9 +344,10 @@ pod당 처리량 = 20명/분
 
 | 단계 | 기준 | 의미 |
 | --- | --- | --- |
-| 관심 | 40 connections 이상 | 평소보다 높음, scale-out 상황 확인 |
-| 경고 | 55 connections 이상 | app budget에 근접, 대기열 입장량/worker 처리량 조정 검토 |
-| 위험 | 65 connections 이상 | 신규 connection 실패 가능성, KEDA max/pool/입장량 즉시 점검 |
+| 관심 | 40 connections 이상 | 대기열 입장량 75%로 감속 |
+| 경고 | 50 connections 이상 | 대기열 입장량 50%로 감속 |
+| 위험 | 55 connections 이상 | 대기열 입장량 25%로 감속 |
+| 중지 | 60 connections 이상 | 신규 입장 일시 중지 |
 
 현재 Terraform alarm 반영 사항:
 
@@ -368,11 +401,11 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 | 작업 | 목적 | 우선순위 |
 | --- | --- | --- |
 | 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 완료 |
-| KEDA maxReplicaCount를 DB budget에 맞게 조정 | scale-out 상한을 RDS connection budget 안으로 제한 | 높음 |
+| KEDA maxReplicaCount를 DB budget에 맞게 조정 | scale-out 상한을 RDS connection budget 안으로 제한 | 완료 |
 | Python 서비스 DB connection 정책 확인 | `order-service`, `ai-chatbot-service` connection budget 분리 | 높음 |
 | RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 완료 |
 | connection 진단 스크립트 추가 | CloudWatch 알람 후 서비스별 connection 현황 자동 수집 | 중 |
-| 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 중 |
+| 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 구현 완료, 배포 검증 필요 |
 | RDS Proxy 검토 | connection storm 완화 | 중 |
 | Read Replica 검토 | 경기/좌석 조회 부하 분산 | 중 |
 
@@ -382,5 +415,5 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 - RDS connection은 작은 dev RDS에서 가장 먼저 한계에 닿을 수 있는 병목입니다.
 - 서비스별 `replica x pool size`를 계산해 RDS connection budget 안에서 autoscaling 상한을 설계했습니다.
 - `db.t4g.micro`의 `max_connections=79`를 기준으로 app budget을 약 60으로 잡고, 운영/마이그레이션/KEDA 점검 여유분을 남겼습니다.
-- 동적 대기열 admission control은 backend pod 수뿐 아니라 RDS 보호 전략과 함께 동작해야 합니다.
-- 향후에는 RDS connection 상태를 보고 대기열 입장량을 자동 조절하는 방향으로 고도화할 수 있습니다.
+- 동적 대기열은 관리자 상한, ticket-service Ready Pod 수, RDS connection 압력을 함께 반영합니다.
+- RDS가 위험 구간에 가까워지면 진행 중인 예약을 끊지 않고 신규 입장 속도를 자동으로 줄입니다.
