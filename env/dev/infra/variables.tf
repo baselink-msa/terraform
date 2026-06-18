@@ -165,3 +165,12 @@ variable "github_actions_runner_instance_type" {
   type        = string
   default     = "t3.small"
 }
+
+# ── Change Auditor (개인 프로젝트) ──────────────────────────────────
+
+variable "change_auditor_slack_webhook_url" {
+  description = "Slack Incoming Webhook URL for the Change Auditor notifications."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
