@@ -27,3 +27,13 @@ output "eventbridge_rule_arn" {
   description = "EventBridge rule ARN."
   value       = aws_cloudwatch_event_rule.cloudtrail_changes.arn
 }
+
+output "cloudtrail_arn" {
+  description = "CloudTrail trail ARN."
+  value       = aws_cloudtrail.management.arn
+}
+
+output "cloudtrail_s3_bucket" {
+  description = "S3 bucket for CloudTrail logs."
+  value       = aws_s3_bucket.cloudtrail.id
+}

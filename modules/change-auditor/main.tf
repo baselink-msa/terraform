@@ -7,6 +7,78 @@ locals {
 }
 
 # ────────────────────────────────────────────────────────────────────
+# CloudTrail — EventBridge로 management event 전달하기 위한 trail
+# ────────────────────────────────────────────────────────────────────
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "cloudtrail" {
+  bucket        = "${local.name_prefix}-cloudtrail-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+  tags          = local.common_tags
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  rule {
+    id     = "expire-logs"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 30
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AWSCloudTrailAclCheck"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:GetBucketAcl"
+        Resource  = aws_s3_bucket.cloudtrail.arn
+      },
+      {
+        Sid       = "AWSCloudTrailWrite"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.cloudtrail.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-acl" = "bucket-owner-full-control"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_cloudtrail" "management" {
+  name                          = "${local.name_prefix}-trail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail.id
+  is_multi_region_trail         = false
+  include_global_service_events = true
+  enable_log_file_validation    = true
+
+  event_selector {
+    read_write_type           = "WriteOnly"
+    include_management_events = true
+  }
+
+  depends_on = [aws_s3_bucket_policy.cloudtrail]
+  tags       = local.common_tags
+}
+
+# ────────────────────────────────────────────────────────────────────
 # Slack Webhook Secret
 # ────────────────────────────────────────────────────────────────────
 
