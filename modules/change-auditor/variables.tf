@@ -34,13 +34,13 @@ variable "slack_webhook_url" {
 variable "bedrock_model_id" {
   description = "Bedrock model ID or inference profile ID for AI analysis."
   type        = string
-  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  default     = "anthropic.claude-3-haiku-20240307-v1:0"
 }
 
 variable "bedrock_region" {
   description = "Bedrock service region."
   type        = string
-  default     = "us-east-1"
+  default     = "ap-northeast-2"
 }
 
 variable "log_retention_days" {
