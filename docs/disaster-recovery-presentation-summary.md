@@ -164,20 +164,25 @@ KEDA와 Karpenter는 트래픽이 몰릴 때 pod와 node를 늘려줍니다. 하
 - Spring Boot 서비스별 Hikari pool size를 역할별로 분리했습니다.
 - 예매 핵심 쓰기 경로인 `ticket-service`에 pool을 우선 배정했습니다.
 - 대기열/관리 서비스는 작은 pool을 사용하게 해 DB 부담을 낮췄습니다.
-- 다음 단계로 KEDA maxReplicaCount를 `replica x pool <= 60` 기준에 맞추는 변경안을 설계했습니다.
+- KEDA maxReplicaCount를 Spring과 Python 서비스 전체의 `replica x pool <= 60` 기준으로 조정했습니다.
 - RDS connection이 40/50/55/60에 도달하면 대기열 입장량을 75%/50%/25%/0%로 자동 감속하도록 구현했습니다.
+- Python 서비스도 요청마다 connection을 새로 만들던 구조에서 bounded psycopg2 pool로 변경했습니다.
 
 KEDA 변경안:
 
-| 서비스 | 제안 maxReplicaCount | Hikari max pool | 최대 connection |
+| 서비스 | maxReplicaCount | pod당 max pool | 최대 connection |
 | --- | ---: | ---: | ---: |
-| `ticket-service` | 6 | 4 | 24 |
+| `ticket-service` | 5 | 4 | 20 |
 | `ticket-worker-service` | 4 | 3 | 12 |
 | `seat-lock-service` | 4 | 2 | 8 |
 | `waiting-room-service` | 4 | 1 | 4 |
-| `auth-service` | 3 | 2 | 6 |
+| `auth-service` | 2 | 2 | 4 |
 | `game-service` | 2 | 2 | 4 |
 | `admin-service` | 2 | 1 | 2 |
+| Spring Boot 소계 |  |  | 54 |
+| `order-service` | 4 | 1 | 4 |
+| `ai-chatbot-service` | 2 | 1 | 2 |
+| Python 소계 |  |  | 6 |
 | 합계 |  |  | 60 |
 
 발표 포인트:
@@ -205,8 +210,9 @@ KEDA 변경안:
 | --- | --- | --- |
 | RDS Read Replica 검토 | 경기/좌석 조회 트래픽 분산 | 중 |
 | 서비스별 Hikari pool size 분리 | scale-out 시 RDS connection 고갈 방지 | 완료 |
-| KEDA maxReplicaCount DB budget 반영 | RDS connection budget 안에서 autoscaling 제한 | 높음 |
-| RDS connection 기반 대기열 자동 감속 | DB 위험 구간에서 신규 입장량 자동 조절 | 구현 완료, 배포 검증 필요 |
+| KEDA maxReplicaCount DB budget 반영 | RDS connection budget 안에서 autoscaling 제한 | 완료 |
+| Python DB connection pool 제한 | Python 서비스의 순간 connection 증가 방지 | 구현 완료, 배포 검증 필요 |
+| RDS connection 기반 대기열 자동 감속 | DB 위험 구간에서 신규 입장량 자동 조절 | 완료 |
 | RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
 | AWS Backup cross-region copy | 서울 리전 장애 대비 | 중 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |

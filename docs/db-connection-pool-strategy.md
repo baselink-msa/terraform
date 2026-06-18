@@ -203,17 +203,21 @@ ticket-service 하나는 괜찮아 보이지만, ticket-worker, seat-lock, waiti
 3. `pool size x max replicas` 합계를 계산합니다.
 4. 합계가 app connection budget 60을 넘으면 조정합니다.
 
-dev RDS app budget 60 기준의 KEDA maxReplicaCount 변경 제안은 다음과 같습니다.
+Python 서비스까지 포함한 dev RDS app budget 60 기준의 최종 설정은 다음과 같습니다.
 
-| 서비스 | max replicas | max pool | 최대 connection |
+| 서비스 | max replicas | pod당 max pool | 최대 connection |
 | --- | ---: | ---: | ---: |
-| `ticket-service` | 6 | 4 | 24 |
+| `ticket-service` | 5 | 4 | 20 |
 | `ticket-worker-service` | 4 | 3 | 12 |
 | `seat-lock-service` | 4 | 2 | 8 |
 | `waiting-room-service` | 4 | 1 | 4 |
-| `auth-service` | 3 | 2 | 6 |
+| `auth-service` | 2 | 2 | 4 |
 | `game-service` | 2 | 2 | 4 |
 | `admin-service` | 2 | 1 | 2 |
+| Spring Boot 소계 |  |  | 54 |
+| `order-service` | 4 | 1 | 4 |
+| `ai-chatbot-service` | 2 | 1 | 2 |
+| Python 소계 |  |  | 6 |
 | 합계 |  |  | 60 |
 
 이 변경안은 dev의 작은 RDS에서 connection 고갈을 막기 위한 보수적인 기준입니다.
@@ -222,28 +226,42 @@ dev RDS app budget 60 기준의 KEDA maxReplicaCount 변경 제안은 다음과 
 - `ticket-worker-service`는 SQS 적체를 처리하지만, DB가 병목이면 worker만 늘려도 장애가 커질 수 있어 `4`로 제한합니다.
 - `waiting-room-service`는 Redis 중심 서비스이므로 DB pool과 replica를 낮게 둡니다.
 - `auth-service`, `game-service`, `admin-service`는 예매 피크 때 핵심 쓰기 경로보다 낮은 우선순위로 둡니다.
+- Python 서비스에도 pod당 1개의 connection을 명시적으로 배정해 순간 connection 증가를 제한합니다.
 
-주의할 점:
+Python 서비스 pool 설정:
 
-- Python 서비스인 `order-service`, `ai-chatbot-service`의 DB connection 수는 Hikari 계산에 포함되지 않았습니다. 두 서비스의 DB driver/pool 정책을 확인한 뒤 별도 budget을 잡아야 합니다.
-- KEDA 담당자의 예측 스케일링 쿼리가 반환하는 pod 수가 이 maxReplicaCount를 넘으면, 실제 replica는 maxReplicaCount에서 잘립니다.
-- 이 변경은 처리량을 무조건 줄이자는 의미가 아니라, 현재 dev RDS 크기에서 DB가 먼저 죽지 않도록 autoscaling 상한을 DB budget과 맞추자는 의미입니다.
+```text
+PYTHON_DB_POOL_MIN_SIZE=1
+PYTHON_DB_POOL_MAX_SIZE=1
+PYTHON_DB_POOL_TIMEOUT_SECONDS=2
+PYTHON_DB_CONNECT_TIMEOUT_SECONDS=3
+PYTHON_DB_STATEMENT_TIMEOUT_MS=5000
+```
+
+- 기존에는 API 요청마다 `psycopg2.connect()`로 새 connection을 만들고 요청 종료 시 닫았습니다.
+- 변경 후에는 `ThreadedConnectionPool`에서 connection을 재사용합니다.
+- semaphore로 동시 connection을 pod당 1개로 제한합니다.
+- 2초 안에 connection을 얻지 못하면 `503 DB_CONNECTION_POOL_EXHAUSTED`를 반환합니다.
+- connection 반환 전 rollback하여 `idle in transaction` 상태를 방지합니다.
+- 애플리케이션 종료 시 pool의 모든 connection을 닫습니다.
 
 GitOps 변경안:
 
-| ScaledObject | 현재 maxReplicaCount | 제안 maxReplicaCount |
-| --- | ---: | ---: |
-| `ticket-service-scaler` | 10 | 6 |
-| `ticket-worker-scaler` | 10 | 4 |
-| `seat-lock-service-scaler` | 10 | 4 |
-| `waiting-room-service-scaler` | 10 | 4 |
-| `auth-service-scaler` | 10 | 3 |
-| `game-service-scaler` | 10 | 2 |
-| `admin-service-scaler` | 3 | 2 |
+| ScaledObject | maxReplicaCount |
+| --- | ---: |
+| `ticket-service-scaler` | 5 |
+| `ticket-worker-scaler` | 4 |
+| `seat-lock-service-scaler` | 4 |
+| `waiting-room-service-scaler` | 4 |
+| `auth-service-scaler` | 2 |
+| `game-service-scaler` | 2 |
+| `admin-service-scaler` | 2 |
+| `order-service-scaler` | 4 |
+| `ai-chatbot-service-scaler` | 2 |
 
 `minReplicaCount=2`와 PDB가 적용되어 있으므로, `game-service`와 `admin-service`처럼 `maxReplicaCount=2`인 서비스는 최소 2개를 유지하되 그 이상으로는 늘리지 않는 구조가 됩니다.
 
-`order-service`, `ai-chatbot-service`는 별도 DB connection 정책을 확인하기 전까지 이번 Spring Boot Hikari budget 변경 범위에서 제외합니다.
+KEDA 담당자의 예측 스케일링 쿼리가 반환하는 pod 수가 이 maxReplicaCount를 넘으면 실제 replica는 maxReplicaCount에서 제한됩니다.
 
 ## 8. RDS instance class 판단 기준
 
@@ -402,7 +420,7 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 | --- | --- | --- |
 | 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 완료 |
 | KEDA maxReplicaCount를 DB budget에 맞게 조정 | scale-out 상한을 RDS connection budget 안으로 제한 | 완료 |
-| Python 서비스 DB connection 정책 확인 | `order-service`, `ai-chatbot-service` connection budget 분리 | 높음 |
+| Python 서비스 DB connection 정책 적용 | bounded psycopg2 pool과 KEDA 상한으로 connection budget 분리 | 구현 완료, 배포 검증 필요 |
 | RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 완료 |
 | connection 진단 스크립트 추가 | CloudWatch 알람 후 서비스별 connection 현황 자동 수집 | 중 |
 | 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 구현 완료, 배포 검증 필요 |
