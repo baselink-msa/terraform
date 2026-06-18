@@ -281,9 +281,9 @@ resource "aws_iam_role_policy" "lambda_inline" {
         Effect = "Allow"
         Action = ["bedrock:InvokeModel"]
         Resource = [
-          "arn:aws:bedrock:${var.bedrock_region}::foundation-model/*claude*",
-          "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
-          "arn:aws:bedrock:${var.bedrock_region}::inference-profile/${var.bedrock_model_id}"
+          "arn:aws:bedrock:*::foundation-model/*claude*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
+          "arn:aws:bedrock:*::inference-profile/${var.bedrock_model_id}"
         ]
       },
       {
