@@ -78,6 +78,12 @@ variable "web_acl_arn" {
   type        = string
 }
 
+variable "grafana_origin_domain_name" {
+  description = "Grafana ALB origin domain name for the /grafana/* path."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags applied to supported CloudFront and S3 resources."
   type        = map(string)
