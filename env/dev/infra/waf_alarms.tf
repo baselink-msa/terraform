@@ -7,36 +7,44 @@ locals {
       metric_name = "${local.cloudfront_waf_name}-amazon-ip-reputation"
       description = "CloudFront WAF Amazon IP reputation block detected."
     }
+    anonymous_ip = {
+      metric_name = "${local.cloudfront_waf_name}-anonymous-ip"
+      description = "CloudFront WAF anonymous IP block detected."
+    }
+    common = {
+      metric_name = "${local.cloudfront_waf_name}-common"
+      description = "CloudFront WAF common rule block detected."
+    }
     known_bad_inputs = {
       metric_name = "${local.cloudfront_waf_name}-known-bad-inputs"
       description = "CloudFront WAF known bad inputs block detected."
     }
-  }
-
-  cloudfront_waf_counted_rules = {
-    anonymous_ip = {
-      metric_name = "${local.cloudfront_waf_name}-anonymous-ip"
-      description = "CloudFront WAF anonymous IP match counted."
-    }
-    common = {
-      metric_name = "${local.cloudfront_waf_name}-common"
-      description = "CloudFront WAF common rule match counted."
-    }
     global_rate = {
       metric_name = "${local.cloudfront_waf_name}-global-rate"
-      description = "CloudFront WAF rate based rule match counted."
+      description = "CloudFront WAF rate based rule block detected."
     }
     non_kr_geo = {
       metric_name = "${local.cloudfront_waf_name}-non-kr-geo"
-      description = "CloudFront WAF non-KR geo rule match counted."
+      description = "CloudFront WAF non-KR geo block detected."
     }
     body_size = {
       metric_name = "${local.cloudfront_waf_name}-body-size"
-      description = "CloudFront WAF body size rule match counted."
+      description = "CloudFront WAF body size block detected."
+    }
+  }
+
+  cloudfront_waf_counted_rules = {
+    common_size_restrictions_body = {
+      metric_name = "${local.cloudfront_waf_name}-common"
+      description = "CloudFront WAF common rule SizeRestrictions_BODY counted."
     }
   }
 
   api_alb_waf_blocked_rules = {
+    amazon_ip_reputation = {
+      metric_name = "${local.api_alb_waf_name}-amazon-ip-reputation"
+      description = "API ALB WAF Amazon IP reputation block detected."
+    }
     known_bad_inputs = {
       metric_name = "${local.api_alb_waf_name}-known-bad-inputs"
       description = "API ALB WAF known bad inputs block detected."
@@ -45,20 +53,28 @@ locals {
       metric_name = "${local.api_alb_waf_name}-sqli"
       description = "API ALB WAF SQL injection block detected."
     }
-  }
-
-  api_alb_waf_counted_rules = {
     admin_protection = {
       metric_name = "${local.api_alb_waf_name}-admin-protection"
-      description = "API ALB WAF admin protection rule match counted."
+      description = "API ALB WAF admin protection block detected."
     }
     common = {
       metric_name = "${local.api_alb_waf_name}-common"
-      description = "API ALB WAF common rule match counted."
+      description = "API ALB WAF common rule block detected."
+    }
+    global_rate = {
+      metric_name = "${local.api_alb_waf_name}-global-rate"
+      description = "API ALB WAF rate based rule block detected."
     }
     body_size = {
       metric_name = "${local.api_alb_waf_name}-body-size"
-      description = "API ALB WAF body size rule match counted."
+      description = "API ALB WAF body size block detected."
+    }
+  }
+
+  api_alb_waf_counted_rules = {
+    common_size_restrictions_body = {
+      metric_name = "${local.api_alb_waf_name}-common"
+      description = "API ALB WAF common rule SizeRestrictions_BODY counted."
     }
   }
 }
