@@ -133,7 +133,7 @@ variable "waf_log_retention_days" {
 variable "waf_rate_limit" {
   description = "Maximum requests per 5-minute window per source IP before WAF rate rules match."
   type        = number
-  default     = 1000
+  default     = 2000
 }
 
 variable "waf_blocked_requests_alarm_threshold" {
