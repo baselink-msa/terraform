@@ -15,7 +15,7 @@ module "change_auditor" {
   private_subnet_ids = module.vpc.private_app_subnet_ids
   slack_webhook_url  = var.change_auditor_slack_webhook_url
 
-  bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+  bedrock_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
   bedrock_region   = "us-east-1"
 
   log_retention_days    = 14

@@ -34,7 +34,7 @@ variable "slack_webhook_url" {
 variable "bedrock_model_id" {
   description = "Bedrock model ID for AI analysis."
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "bedrock_region" {
