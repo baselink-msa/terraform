@@ -698,6 +698,16 @@ resource "helm_release" "keda" {
 
   # ALB Controller webhook이 준비된 후에 설치 (타이밍 이슈 방지)
   depends_on = [helm_release.aws_load_balancer_controller]
+
+  # Prometheus 메트릭 엔드포인트 활성화 (포트 9666)
+  set {
+    name  = "prometheus.operator.enabled"
+    value = "true"
+  }
+  set {
+    name  = "prometheus.operator.port"
+    value = "9666"
+  }
 }
 
 #==============================================================================
