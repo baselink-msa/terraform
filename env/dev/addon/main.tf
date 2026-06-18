@@ -107,6 +107,10 @@ resource "kubectl_manifest" "backend_config" {
       WAITING_ROOM_DB_CRITICAL_THRESHOLD                      = "55"
       WAITING_ROOM_DB_PRESSURE_CACHE_TTL_MS                   = "5000"
       KNOWLEDGE_BASE_ID                                       = "<bedrock-knowledge-base-id>"
+      OTEL_EXPORTER_OTLP_ENDPOINT                               = "http://otel-collector.monitoring:4317"
+      OTEL_TRACES_EXPORTER                                      = "otlp"
+      OTEL_METRICS_EXPORTER                                     = "none"
+      OTEL_LOGS_EXPORTER                                        = "none"
     }
   })
 
