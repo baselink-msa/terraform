@@ -65,7 +65,7 @@ resource "aws_s3_bucket_policy" "cloudtrail" {
 resource "aws_cloudtrail" "management" {
   name                          = "${local.name_prefix}-trail"
   s3_bucket_name                = aws_s3_bucket.cloudtrail.id
-  is_multi_region_trail         = false
+  is_multi_region_trail         = true
   include_global_service_events = true
   enable_log_file_validation    = true
 
