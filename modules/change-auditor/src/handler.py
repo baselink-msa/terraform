@@ -12,7 +12,7 @@ EventBridge → SQS → 이 Lambda
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 
@@ -34,6 +34,84 @@ dynamodb = boto3.resource("dynamodb")
 
 
 # ─── 호출 경로 분류 ──────────────────────────────────────────────────────────────
+
+KNOWN_SERVICE_ACTORS = {
+    "karpenter": "Karpenter",
+    "keda": "KEDA",
+    "eks.amazonaws.com": "EKS",
+    "autoscaling.amazonaws.com": "Auto Scaling",
+    "elasticloadbalancing.amazonaws.com": "ALB/ELB",
+    "rds.amazonaws.com": "RDS",
+    "lambda.amazonaws.com": "Lambda",
+    "cloudformation.amazonaws.com": "CloudFormation",
+    "ecs.amazonaws.com": "ECS",
+}
+
+
+def extract_user_display_name(event_detail: dict) -> str:
+    """CloudTrail userIdentity에서 사람이 읽을 수 있는 이름을 추출한다."""
+    user_identity = event_detail.get("userIdentity", {})
+    identity_type = user_identity.get("type", "")
+
+    # IAM User: userName 직접 사용
+    if identity_type == "IAMUser":
+        return user_identity.get("userName", "unknown")
+
+    # Root
+    if identity_type == "Root":
+        return "Root"
+
+    # AssumedRole: sessionContext에서 역할명 추출
+    if identity_type == "AssumedRole":
+        session_context = user_identity.get("sessionContext", {})
+        session_issuer = session_context.get("sessionIssuer", {})
+        role_name = session_issuer.get("userName", "")
+
+        # principalId에서 세션 이름 추출 (AROA...:session-name)
+        principal_id = user_identity.get("principalId", "")
+        session_name = ""
+        if ":" in principal_id:
+            session_name = principal_id.split(":", 1)[1]
+
+        # 알려진 서비스 매칭
+        combined = f"{role_name} {session_name}".lower()
+        for keyword, display_name in KNOWN_SERVICE_ACTORS.items():
+            if keyword in combined:
+                return display_name
+
+        # GitHub Actions
+        if "github" in combined:
+            return "GitHub Actions"
+
+        # 역할명이 있으면 그걸 표시
+        if role_name:
+            if session_name and session_name != role_name:
+                return f"{role_name} ({session_name})"
+            return role_name
+
+        return session_name or principal_id or "unknown"
+
+    # AWSService
+    if identity_type == "AWSService":
+        invoking_service = user_identity.get("invokedBy", "")
+        for keyword, display_name in KNOWN_SERVICE_ACTORS.items():
+            if keyword in invoking_service.lower():
+                return display_name
+        return invoking_service or "AWS Service"
+
+    # Fallback
+    return user_identity.get("userName", user_identity.get("principalId", "unknown"))
+
+
+def format_event_time_kst(event_time: str) -> str:
+    """UTC 시간 문자열을 KST(+9) 형식으로 변환한다."""
+    try:
+        # CloudTrail 시간 형식: 2026-06-18T06:46:45Z
+        dt = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+        kst = dt + timedelta(hours=9)
+        return kst.strftime("%Y-%m-%d %H:%M:%S KST")
+    except Exception:
+        return event_time
 
 def classify_actor(event_detail: dict) -> str:
     """userAgent 기반으로 호출 경로를 분류한다."""
@@ -307,9 +385,8 @@ def send_slack(event_detail: dict, actor_type: str, analysis: dict):
     severity = analysis.get("severity", "Low")
     emoji = SEVERITY_EMOJI.get(severity, "⚪")
 
-    user_identity = event_detail.get("userIdentity", {})
-    user_name = user_identity.get("userName", user_identity.get("principalId", "unknown"))
-
+    user_name = extract_user_display_name(event_detail)
+    event_time_kst = format_event_time_kst(event_detail.get("eventTime", ""))
     event_id = event_detail.get("eventID", "N/A")
 
     blocks = [
@@ -324,7 +401,7 @@ def send_slack(event_detail: dict, actor_type: str, analysis: dict):
                 {"type": "mrkdwn", "text": f"*누가:* {user_name}"},
                 {"type": "mrkdwn", "text": f"*서비스:* {event_detail.get('eventSource', '')}"},
                 {"type": "mrkdwn", "text": f"*이벤트:* {event_detail.get('eventName', '')}"},
-                {"type": "mrkdwn", "text": f"*언제:* {event_detail.get('eventTime', '')}"},
+                {"type": "mrkdwn", "text": f"*언제:* {event_time_kst}"},
                 {"type": "mrkdwn", "text": f"*환경:* {ENVIRONMENT}"},
             ],
         },
@@ -377,7 +454,7 @@ def save_to_dynamodb(event_detail: dict, actor_type: str, analysis: dict):
             "event_name": event_detail.get("eventName", ""),
             "event_source": event_detail.get("eventSource", ""),
             "actor_type": actor_type,
-            "user_name": event_detail.get("userIdentity", {}).get("userName", "unknown"),
+            "user_name": extract_user_display_name(event_detail),
             "severity": analysis.get("severity", "Low"),
             "summary": analysis.get("summary", ""),
             "detail": analysis.get("detail", ""),
