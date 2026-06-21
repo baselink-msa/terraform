@@ -161,6 +161,35 @@ module "sqs_ticket_confirm" {
   tags = local.common_tags
 }
 
+module "sqs_ticket_domain_events" {
+  source = "../../../modules/sqs"
+
+  queue_name               = "ticket-domain-events"
+  create_dead_letter_queue = true
+  dead_letter_queue_name   = "ticket-domain-events-dlq"
+  max_receive_count        = 5
+
+  message_retention_seconds                   = 345600
+  dead_letter_queue_message_retention_seconds = 1209600
+  receive_wait_time_seconds                   = 20
+  sqs_managed_sse_enabled                     = true
+
+  create_dead_letter_queue_alarm     = true
+  dead_letter_queue_alarm_name       = "${local.name_prefix}-ticket-domain-events-dlq-messages-visible"
+  dead_letter_queue_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+  dead_letter_queue_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+
+  create_queue_backlog_alarm     = true
+  queue_backlog_alarm_name       = "${local.name_prefix}-ticket-domain-events-backlog"
+  queue_backlog_alarm_threshold  = 100
+  queue_backlog_alarm_actions    = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+  queue_backlog_alarm_ok_actions = var.enable_slack_alerts ? [aws_sns_topic.ops_alerts[0].arn] : []
+
+  tags = merge(local.common_tags, {
+    Purpose = "ticket-domain-event-pipeline"
+  })
+}
+
 resource "aws_iam_role_policy" "eks_node_backend_runtime" {
   name = "${local.name_prefix}-backend-runtime"
   role = split("/", module.eks.node_role_arn)[1]
@@ -254,6 +283,16 @@ resource "aws_iam_role_policy" "backend_runtime_irsa" {
           "sqs:ChangeMessageVisibility"
         ]
         Resource = module.sqs_ticket_confirm.queue_arn
+      },
+      {
+        Sid    = "TicketDomainEventPublish"
+        Effect = "Allow"
+        Action = [
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:SendMessage"
+        ]
+        Resource = module.sqs_ticket_domain_events.queue_arn
       },
       {
         Sid    = "ChatbotBedrockAccess"

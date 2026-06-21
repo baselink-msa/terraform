@@ -24,6 +24,7 @@ ticket-service
 - DLQ: `ticket-confirm-dlq`
 - Redrive policy: 원본 큐에서 5회 초과 실패 시 DLQ 이동
 - Redrive allow policy: 원본 큐에서 온 메시지만 DLQ redrive 허용
+- Amazon SQS managed SSE: 원본 큐와 DLQ의 서버 측 암호화 기본 활성화
 - CloudWatch Alarm: DLQ에 보이는 메시지가 1개 이상이면 `ALARM`
 - SNS Topic: `baselink-dev-ops-alerts`
 - Slack 연동: Amazon Q Developer chat configuration

@@ -123,6 +123,26 @@ output "ticket_confirm_dlq_alarm_arn" {
   value       = module.sqs_ticket_confirm.dead_letter_queue_alarm_arn
 }
 
+output "ticket_domain_events_queue_url" {
+  description = "URL of the ticket domain event queue."
+  value       = module.sqs_ticket_domain_events.queue_url
+}
+
+output "ticket_domain_events_queue_arn" {
+  description = "ARN of the ticket domain event queue."
+  value       = module.sqs_ticket_domain_events.queue_arn
+}
+
+output "ticket_domain_events_dlq_url" {
+  description = "URL of the ticket domain event dead-letter queue."
+  value       = module.sqs_ticket_domain_events.dead_letter_queue_url
+}
+
+output "ticket_domain_events_dlq_arn" {
+  description = "ARN of the ticket domain event dead-letter queue."
+  value       = module.sqs_ticket_domain_events.dead_letter_queue_arn
+}
+
 output "ops_alerts_sns_topic_arn" {
   description = "SNS topic ARN used for team operations alerts."
   value       = var.enable_slack_alerts ? aws_sns_topic.ops_alerts[0].arn : null
