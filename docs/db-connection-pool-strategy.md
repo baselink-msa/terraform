@@ -373,6 +373,54 @@ RDS connection 감속 단계:
 - 운영 환경은 RDS instance class와 `max_connections`에 맞춰 threshold를 계산합니다.
 - connection alarm이 울리면 대기열 `maxEnterPerMinute` 또는 pod당 입장 처리량을 낮추는 운영 절차를 둡니다.
 
+### Python DB pool 모니터링
+
+`order-service`와 `ai-chatbot-service`는 다음 metric을 `/actuator/prometheus`로 노출합니다.
+
+- `python_db_pool_in_use`
+- `python_db_pool_available`
+- `python_db_pool_max`
+- `python_db_pool_acquire_timeout_total`
+- `python_db_pool_acquire_wait_seconds`
+
+ServiceMonitor가 Kubernetes의 `service` target label을 추가하므로 애플리케이션이 설정한 서비스 이름 label은 Prometheus에서 `exported_service`로 조회합니다.
+
+```promql
+sum(python_db_pool_in_use) by (exported_service)
+```
+
+```promql
+sum(python_db_pool_available) by (exported_service)
+```
+
+```promql
+100 *
+sum(python_db_pool_in_use) by (exported_service)
+/
+sum(python_db_pool_max) by (exported_service)
+```
+
+```promql
+sum(increase(python_db_pool_acquire_timeout_total[5m]))
+by (exported_service)
+```
+
+```promql
+histogram_quantile(
+  0.95,
+  sum(rate(python_db_pool_acquire_wait_seconds_bucket[5m]))
+  by (le, exported_service)
+)
+```
+
+권장 알림 기준:
+
+- pod별 `python_db_pool_available == 0` 상태가 1분 지속되면 warning
+- 서비스별 pool 사용률이 80% 이상으로 5분 지속되면 warning
+- 최근 5분 동안 pool 획득 timeout이 한 번이라도 발생하면 critical
+- pool 획득 대기시간 p95가 1초를 5분 동안 초과하면 warning
+- 두 서비스의 `python_db_pool_max` 시계열이 5분 이상 사라지면 warning
+
 ## 11. 장애 예방 운영 절차
 
 RDS connection이 높아질 때는 아래 순서로 확인합니다.
@@ -420,10 +468,10 @@ kubectl logs -n baselink-dev deployment/waiting-room-service --tail=100
 | --- | --- | --- |
 | 서비스별 Hikari pool size 분리 | 모든 서비스에 공통 pool을 주지 않고 역할별 제어 | 완료 |
 | KEDA maxReplicaCount를 DB budget에 맞게 조정 | scale-out 상한을 RDS connection budget 안으로 제한 | 완료 |
-| Python 서비스 DB connection 정책 적용 | bounded psycopg2 pool과 KEDA 상한으로 connection budget 분리 | 구현 완료, 배포 검증 필요 |
+| Python 서비스 DB connection 정책 적용 | bounded psycopg2 pool과 KEDA 상한으로 connection budget 분리 | 배포 및 RDS connection 검증 완료 |
 | RDS connection alarm threshold 재조정 | 현재 RDS max_connections에 맞는 조기 경보 | 완료 |
 | connection 진단 스크립트 추가 | CloudWatch 알람 후 서비스별 connection 현황 자동 수집 | 중 |
-| 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 구현 완료, 배포 검증 필요 |
+| 대기열 입장량과 RDS connection 연동 | RDS 위험 시 입장량 자동 감속 | 배포 및 단계별 감속 검증 완료 |
 | RDS Proxy 검토 | connection storm 완화 | 중 |
 | Read Replica 검토 | 경기/좌석 조회 부하 분산 | 중 |
 
