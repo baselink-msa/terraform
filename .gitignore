@@ -21,3 +21,6 @@ override.tf.json
 
 # Lambda zip artifact
 *.zip
+
+# Generated capacity advisor reports
+capacity-reports/

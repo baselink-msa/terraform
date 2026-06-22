@@ -750,3 +750,47 @@ ticket-events/
 - Athena 전용 workgroup과 암호화된 query result
 - 일별 이벤트 수, 평균 대기 시간, 예약 전환율 named query
 - 실제 Athena query 실행과 결과 검증
+
+### 2026-06-22: Athena 분석 검증과 Capacity Advisor 구현
+
+Athena 검증:
+
+- `ticket-events-daily-volume` 실행 성공
+- `ticket-events-average-waiting-time` 실행 성공
+- `ticket-events-reservation-conversion` 실행 성공
+- 실제 S3 이벤트를 `game_id=1`, `RESERVATION_CONFIRMED=1`로 조회
+- Partition Projection을 사용하므로 일별 partition 수동 등록 불필요
+
+Capacity Advisor:
+
+- Athena에서 최근 기간의 대기열 진입, 토큰 발급, 예약 요청·확정 수집
+- 예약 확정 분당 안정 처리량 중앙값 계산
+- 예약 전환율, 안전계수, 평균 대기 시간 보정
+- 현재 정책 대비 한 번에 25%를 넘는 증가는 제한
+- 최소 표본 미달 시 `INSUFFICIENT_DATA`로 추천 보류
+- JSON과 Markdown 보고서 생성
+- AI 없이 동일 입력에 동일 결과를 내는 규칙 기반 계산
+
+기존 자동 감속과의 역할 분리:
+
+```text
+Capacity Advisor
+  과거 정상 구간 데이터 → recommendedPolicyEnterPerMinute
+
+Waiting Room Admission Control
+  현재 RDS 압력 → effectiveEnterPerMinuteNow
+```
+
+Advisor는 현재 DB 여유율을 장기 정책값에 중복 적용하지 않습니다. DB 압력은 현재 운영 참고값과 경고 근거로만 사용하며, 실제 서비스의 자동 감속이 최종 입장량을 제어합니다.
+
+실제 첫 실행 결과:
+
+```text
+current DB connections = 20 / 60
+db pressure = NORMAL
+reservation confirmed samples = 1
+waiting/access/request samples = 0
+result = INSUFFICIENT_DATA
+```
+
+표본이 부족한 상태에서 임의의 추천값을 생성하지 않고 기존 정책 유지를 권고하는 것을 확인했습니다.
