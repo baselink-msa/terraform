@@ -211,10 +211,72 @@ aws rds delete-db-instance `
 
 운영 환경에서는 삭제 전 final snapshot 생성을 검토합니다.
 
+## 11. 실제 PITR 복구 리허설 결과 - 2026-06-22
+
+`baselink-dev-postgres`의 RDS native automated backup을 사용해 명시한 시점으로 새 DB를 복원하고 애플리케이션 연결까지 검증했습니다.
+
+복원 정보:
+
+| 항목 | 결과 |
+| --- | --- |
+| PITR 요청 시각 | 2026-06-22 15:47:52 KST |
+| 요청 시점 최신 복구 가능 시각 | 2026-06-22 15:44:24 KST |
+| 관측된 최신 복구 지연 | 약 3분 28초 |
+| 지정 복원 시점 | 2026-06-22 15:39:24 KST |
+| 대상 DB | `baselink-dev-postgres-pitr-20260622` |
+| RDS 복원 이벤트 | 2026-06-22 15:54:42 KST |
+| DB 재시작 이벤트 | 2026-06-22 15:55:13 KST |
+| DB 인프라 복구 시간 | 약 7분 21초 |
+| 인스턴스 클래스 | `db.t4g.micro` |
+| Multi-AZ | `false` |
+| Public access | `false` |
+
+CloudTrail에서 `RestoreDBInstanceToPointInTime` 요청과 다음 값이 기록된 것을 확인했습니다.
+
+- `useLatestRestorableTime = false`
+- `restoreTime = 2026-06-22 06:39:24 UTC`
+- 기존 DB와 다른 target identifier 사용
+- 기존 RDS subnet group과 security group 사용
+
+DB 검증 결과:
+
+- EKS 내부 임시 PostgreSQL Pod에서 SSL 접속 성공
+- `auth_schema`, `chatbot_schema`, `game_schema`, `order_schema`, `ticket_schema` 확인
+- `auth_schema.flyway_schema_history` V1~V5 성공 이력 확인
+- 주요 row count:
+  - users 6
+  - FAQ 7
+  - games 3
+  - seat sections 25
+  - stadiums 5
+  - seats 1000
+  - game seats 600
+  - reservations 31
+
+애플리케이션 smoke test:
+
+- 운영 `ticket-service`와 동일한 이미지로 단일 임시 Pod 생성
+- 운영 ConfigMap과 Secret은 읽기 전용으로 재사용
+- `SPRING_DATASOURCE_URL`만 PITR endpoint로 덮어씀
+- Hikari connection pool 기동 성공
+- `/actuator/health` 응답: `UP`
+- `GET /api/tickets/my` 읽기 API 호출 성공
+- 운영 Deployment, ConfigMap, Secret, 운영 DB는 변경하지 않음
+- 쓰기 API는 호출하지 않음
+
+정리:
+
+- 임시 PostgreSQL 검증 Pod 삭제
+- 임시 ticket-service smoke Pod 삭제
+- PITR RDS 삭제 후 `db-instance-deleted` waiter로 완료 확인
+
+측정 결과상 최신 복구 가능 시각의 지연은 약 3분 28초로 논리 장애 RPO 목표 5분 안에 들어왔습니다. DB 인프라 RTO도 약 7분 21초로 목표 30~60분 안에 들어왔습니다. 실제 장애에서는 장애 판단, 데이터 비교, 승인, endpoint 전환 시간이 추가되므로 목표 RTO 자체는 30~60분을 유지합니다.
+
 ## 발표 포인트
 
 - RDS Multi-AZ는 인스턴스 장애에 대응합니다.
 - PITR은 데이터 삭제나 오염 같은 논리적 장애에 대응합니다.
 - 자동 백업을 7일 동안 보존해 최근 시점으로 새 RDS를 복원할 수 있습니다.
 - 복원 후 Flyway 이력과 핵심 테이블 count를 확인해 schema와 데이터 정합성을 검증합니다.
+- 명시한 시점의 PITR DB로 실제 ticket-service를 기동하고 health와 읽기 API까지 검증했습니다.
 - 복구 방식은 일부 데이터 보정과 전체 DB endpoint 전환 중 상황에 맞게 선택합니다.

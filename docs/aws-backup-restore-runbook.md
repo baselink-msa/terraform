@@ -337,10 +337,10 @@ Restore job ID:
 
 아직 남은 검증:
 
-- RDS native PITR 임의 시점 복원
-- 복원 DB endpoint를 사용하는 임시 backend smoke test
 - 도쿄 리전 cross-region recovery point 복사와 복원
-- Backup/Restore 실패 알림의 Slack 전달
+- Backup/Restore 테스트 메시지의 Slack 화면 확인
+
+RDS native PITR와 복원 endpoint 기반 임시 backend smoke test는 2026-06-22 완료했습니다. 상세 결과는 `modules/rds/RUNBOOK.md`의 실제 리허설 결과를 따릅니다.
 
 ## 14. 관련 문서
 

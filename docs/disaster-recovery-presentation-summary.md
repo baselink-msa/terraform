@@ -113,6 +113,10 @@ SQS는 예매 요청처럼 비동기로 처리할 수 있는 작업을 안전하
 | 주요 schema/table/row count 검증 | 완료 |
 | 임시 restore DB 삭제 | 완료 |
 | 2026-06-22 daily backup 및 recovery point 8개 확인 | 완료 |
+| Backup/Copy/Restore 실패 EventBridge 배포 | 완료 |
+| 명시 시점 RDS native PITR 복원 | 완료 |
+| PITR DB Flyway/schema/data 검증 | 완료 |
+| PITR endpoint 기반 ticket-service smoke test | 완료 |
 | KEDA maxReplicaCount connection budget 적용 | 완료 |
 | Python bounded DB pool 배포 및 RDS 연결 검증 | 완료 |
 | RDS 감속 NORMAL~STOP 단계별 통합 테스트 | 완료 |
@@ -125,6 +129,18 @@ SQS는 예매 요청처럼 비동기로 처리할 수 있는 작업을 안전하
 - 복원 DB: `baselink-dev-postgres-restore-20260616`
 - Restore 결과: `COMPLETED`
 - 정리 결과: 임시 RDS 삭제 완료
+
+PITR 리허설 결과:
+
+- 수행일: 2026-06-22
+- 최신 복구 가능 시각 지연: 약 3분 28초
+- 지정 복원 시점: 2026-06-22 15:39:24 KST
+- DB 인프라 복구 시간: 약 7분 21초
+- Hikari connection과 Spring Boot 기동 성공
+- Actuator health `UP`
+- 읽기 API 호출 성공
+- 운영 DB와 운영 Deployment 변경 없음
+- 임시 Pod와 RDS 삭제 완료
 
 검증한 주요 데이터:
 
@@ -264,8 +280,8 @@ KEDA 변경안:
 | Capacity Advisor | 처리량 근거가 있는 입장 정책 추천 | JSON/Markdown 보고서와 합성 표본 검증 완료 |
 | 실제 부하 테스트 기반 Advisor 재계산 | 합성 수치 대신 운영 가능한 근거 확보 | 진행 예정 |
 | RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
-| Backup/Restore 실패 알림 | 백업 실패 조기 발견 | Terraform 구현·plan 완료, 배포 대기 |
-| RDS PITR와 복원 endpoint smoke test | 논리 장애 복구 및 연결 전환 증명 | P0 진행 예정 |
+| Backup/Restore 실패 알림 | 백업 실패 조기 발견 | EventBridge/SNS 배포 및 테스트 발행 완료 |
+| RDS PITR와 복원 endpoint smoke test | 논리 장애 복구 및 연결 전환 증명 | 완료, DB RTO 약 7분 21초 |
 | AWS Backup 도쿄 cross-region copy | 서울 리전 장애 대비 | P1 최우선 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |
 | SQS SSE 명시 관리 | 메시지 암호화 정책 명확화 | 중 |
