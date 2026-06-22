@@ -105,11 +105,13 @@ module "rds" {
 module "backup" {
   source = "../../../modules/backup"
 
-  name_prefix       = local.name_prefix
-  rule_name         = "daily-rds-snapshot"
-  resource_arns     = [module.rds.db_instance_arn]
-  delete_after_days = 7
-  tags              = local.common_tags
+  name_prefix                = local.name_prefix
+  rule_name                  = "daily-rds-snapshot"
+  resource_arns              = [module.rds.db_instance_arn]
+  delete_after_days          = 7
+  copy_destination_vault_arn = aws_backup_vault.tokyo.arn
+  copy_delete_after_days     = var.backup_copy_retention_days
+  tags                       = local.common_tags
 }
 
 module "elasticache" {

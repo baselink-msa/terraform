@@ -4,6 +4,23 @@ variable "aws_region" {
   default     = "ap-northeast-2"
 }
 
+variable "dr_region" {
+  description = "AWS Region used for Pilot Light disaster recovery resources."
+  type        = string
+  default     = "ap-northeast-1"
+}
+
+variable "backup_copy_retention_days" {
+  description = "Retention period for RDS recovery point copies in the DR Region."
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.backup_copy_retention_days >= 1
+    error_message = "backup_copy_retention_days must be at least 1."
+  }
+}
+
 variable "project_name" {
   description = "Project name used for resource naming and tags."
   type        = string

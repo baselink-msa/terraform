@@ -57,6 +57,18 @@ resource "aws_backup_plan" "this" {
     lifecycle {
       delete_after = var.delete_after_days
     }
+
+    dynamic "copy_action" {
+      for_each = var.copy_destination_vault_arn == null ? [] : [var.copy_destination_vault_arn]
+
+      content {
+        destination_vault_arn = copy_action.value
+
+        lifecycle {
+          delete_after = var.copy_delete_after_days
+        }
+      }
+    }
   }
 
   tags = merge(var.tags, {
