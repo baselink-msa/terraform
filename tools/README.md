@@ -10,6 +10,20 @@ python tools/ticket_capacity_advisor.py `
   --lookback-days 7
 ```
 
+합성 표본만 분리해서 분석:
+
+```powershell
+python tools/generate_capacity_test_events.py --samples 40
+
+python tools/ticket_capacity_advisor.py `
+  --game-id 1 `
+  --current-policy 40 `
+  --current-db-connections 20 `
+  --producer-filter capacity-load-test
+```
+
+합성 이벤트는 항상 `producer=capacity-load-test`로 저장됩니다. 실제 운영 근거와 섞어서 사용하지 않습니다.
+
 출력:
 
 - `capacity-reports/game-1-capacity.json`
