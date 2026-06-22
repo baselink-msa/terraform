@@ -153,6 +153,16 @@ output "ticket_event_writer_function_name" {
   value       = module.ticket_event_writer.lambda_function_name
 }
 
+output "ticket_event_glue_database_name" {
+  description = "Glue Data Catalog database for ticket events."
+  value       = module.ticket_event_writer.glue_database_name
+}
+
+output "ticket_event_athena_workgroup_name" {
+  description = "Athena workgroup for ticket reliability analysis."
+  value       = module.ticket_event_writer.athena_workgroup_name
+}
+
 output "ops_alerts_sns_topic_arn" {
   description = "SNS topic ARN used for team operations alerts."
   value       = var.enable_slack_alerts ? aws_sns_topic.ops_alerts[0].arn : null

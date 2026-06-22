@@ -90,6 +90,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "events" {
     }
   }
 
+  rule {
+    id     = "expire-athena-query-results"
+    status = "Enabled"
+
+    filter {
+      prefix = "athena-results/"
+    }
+
+    expiration {
+      days = 7
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
   depends_on = [aws_s3_bucket_versioning.events]
 }
 
@@ -156,6 +173,11 @@ data "archive_file" "writer" {
   type        = "zip"
   source_dir  = "${path.module}/src"
   output_path = "${path.module}/ticket-event-writer.zip"
+  excludes = [
+    "__pycache__",
+    "__pycache__/*",
+    "*.pyc"
+  ]
 }
 
 resource "aws_lambda_function" "writer" {
@@ -191,4 +213,185 @@ resource "aws_lambda_event_source_mapping" "ticket_events" {
   maximum_batching_window_in_seconds = 5
   function_response_types            = ["ReportBatchItemFailures"]
   enabled                            = true
+}
+
+resource "aws_glue_catalog_database" "ticket_events" {
+  name        = replace("${var.name_prefix}_ticket_events", "-", "_")
+  description = "Ticket reliability events stored by the event writer Lambda."
+}
+
+resource "aws_glue_catalog_table" "ticket_events" {
+  name          = "ticket_events"
+  database_name = aws_glue_catalog_database.ticket_events.name
+  table_type    = "EXTERNAL_TABLE"
+
+  parameters = {
+    EXTERNAL                              = "TRUE"
+    "projection.enabled"                  = "true"
+    "projection.event_date.type"          = "date"
+    "projection.event_date.range"         = "2026-01-01,NOW"
+    "projection.event_date.format"        = "yyyy-MM-dd"
+    "projection.event_date.interval"      = "1"
+    "projection.event_date.interval.unit" = "DAYS"
+    "projection.event_type.type"          = "enum"
+    "projection.event_type.values" = join(",", [
+      "WAITING_ENTERED",
+      "ACCESS_TOKEN_ISSUED",
+      "RESERVATION_REQUESTED",
+      "RESERVATION_CONFIRMED"
+    ])
+    "storage.location.template" = "s3://${aws_s3_bucket.events.id}/ticket-events/event_date=$${event_date}/event_type=$${event_type}/"
+  }
+
+  partition_keys {
+    name = "event_date"
+    type = "string"
+  }
+
+  partition_keys {
+    name = "event_type"
+    type = "string"
+  }
+
+  storage_descriptor {
+    location      = "s3://${aws_s3_bucket.events.id}/ticket-events/"
+    input_format  = "org.apache.hadoop.mapred.TextInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
+
+    ser_de_info {
+      name                  = "ticket-event-json"
+      serialization_library = "org.openx.data.jsonserde.JsonSerDe"
+
+      parameters = {
+        "case.insensitive" = "true"
+      }
+    }
+
+    columns {
+      name = "eventid"
+      type = "string"
+    }
+
+    columns {
+      name = "schemaVersion"
+      type = "int"
+    }
+
+    columns {
+      name = "occurredAt"
+      type = "string"
+    }
+
+    columns {
+      name = "producer"
+      type = "string"
+    }
+
+    columns {
+      name = "aggregateType"
+      type = "string"
+    }
+
+    columns {
+      name = "aggregateId"
+      type = "string"
+    }
+
+    columns {
+      name = "gameId"
+      type = "bigint"
+    }
+
+    columns {
+      name = "userKey"
+      type = "string"
+    }
+
+    columns {
+      name = "traceId"
+      type = "string"
+    }
+
+    columns {
+      name = "payload"
+      type = "struct<initialRank:bigint,policyMaxEnterPerMinute:bigint,waitingSeconds:double,effectiveEnterPerMinute:bigint,dbPressureLevel:string,dbThrottlePercent:double,reservationId:bigint,seatId:bigint,status:string,pendingDurationSeconds:double>"
+    }
+  }
+}
+
+resource "aws_athena_workgroup" "ticket_events" {
+  name        = "${var.name_prefix}-ticket-events"
+  description = "Athena workgroup for ticket reliability event analysis."
+  state       = "ENABLED"
+
+  configuration {
+    enforce_workgroup_configuration    = true
+    publish_cloudwatch_metrics_enabled = true
+
+    result_configuration {
+      output_location = "s3://${aws_s3_bucket.events.id}/athena-results/"
+
+      encryption_configuration {
+        encryption_option = "SSE_S3"
+      }
+    }
+  }
+
+  tags = var.tags
+}
+
+resource "aws_athena_named_query" "daily_event_volume" {
+  name        = "ticket-events-daily-volume"
+  description = "Counts today's ticket events by game and event type."
+  database    = aws_glue_catalog_database.ticket_events.name
+  workgroup   = aws_athena_workgroup.ticket_events.name
+  query       = <<-SQL
+    SELECT
+      gameId AS game_id,
+      event_type,
+      count(*) AS event_count
+    FROM ticket_events
+    WHERE event_date = date_format(current_date, '%Y-%m-%d')
+    GROUP BY gameId, event_type
+    ORDER BY gameId, event_type
+  SQL
+}
+
+resource "aws_athena_named_query" "average_waiting_time" {
+  name        = "ticket-events-average-waiting-time"
+  description = "Calculates today's average waiting time by game."
+  database    = aws_glue_catalog_database.ticket_events.name
+  workgroup   = aws_athena_workgroup.ticket_events.name
+  query       = <<-SQL
+    SELECT
+      gameId AS game_id,
+      avg(payload.waitingSeconds) AS avg_waiting_seconds,
+      count(*) AS issued_token_count
+    FROM ticket_events
+    WHERE event_date = date_format(current_date, '%Y-%m-%d')
+      AND event_type = 'ACCESS_TOKEN_ISSUED'
+    GROUP BY gameId
+    ORDER BY gameId
+  SQL
+}
+
+resource "aws_athena_named_query" "reservation_conversion" {
+  name        = "ticket-events-reservation-conversion"
+  description = "Calculates today's reservation request-to-confirm conversion by game."
+  database    = aws_glue_catalog_database.ticket_events.name
+  workgroup   = aws_athena_workgroup.ticket_events.name
+  query       = <<-SQL
+    SELECT
+      gameId AS game_id,
+      count_if(event_type = 'RESERVATION_REQUESTED') AS request_count,
+      count_if(event_type = 'RESERVATION_CONFIRMED') AS confirm_count,
+      100.0 * count_if(event_type = 'RESERVATION_CONFIRMED')
+        / nullif(count_if(event_type = 'RESERVATION_REQUESTED'), 0)
+        AS conversion_percent
+    FROM ticket_events
+    WHERE event_date = date_format(current_date, '%Y-%m-%d')
+      AND event_type IN ('RESERVATION_REQUESTED', 'RESERVATION_CONFIRMED')
+    GROUP BY gameId
+    ORDER BY gameId
+  SQL
 }

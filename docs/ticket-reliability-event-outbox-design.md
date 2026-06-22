@@ -712,3 +712,41 @@ Flyway migration과 ticket-service 코드를 같은 PR로 merge하면 auth-servi
 주의:
 
 Target plan에는 IAM role의 EKS/OIDC dependency로 인해 별도의 EKS CIDR와 OIDC thumbprint 변경도 함께 표시됐습니다. 이벤트 인프라 적용 시 `-target`을 그대로 apply하지 않고 최신 main 기준 전체 plan을 팀과 검토해야 합니다.
+
+### 2026-06-22: Event Writer와 S3 적재 검증
+
+완료:
+
+- `ticket-domain-events` SQS를 구독하는 Event Writer Lambda
+- event envelope 필수 필드, schema version, event type 검증
+- 실패한 SQS record만 재시도하는 partial batch failure
+- S3 날짜·이벤트 종류·경기별 partition 적재
+- `eventId` 기반 고정 object key로 중복 전달 멱등 처리
+- S3 public access 차단, SSE-S3, TLS 강제, versioning
+- dev 이벤트 14일 lifecycle
+- 이벤트 큐 visibility timeout 180초 적용
+- Lambda 최소 권한 IAM과 CloudWatch Logs
+- Event Writer 단위 테스트 3개 통과
+- 실제 SQS 이벤트를 전송해 다음 S3 object 생성 확인
+
+```text
+ticket-events/
+  event_date=2026-06-22/
+  event_type=RESERVATION_CONFIRMED/
+  game_id=1/
+  f1779bf2-7d36-43e2-8f21-059063780f99.json
+```
+
+검증 과정에서 확인한 문제:
+
+- PowerShell에서 AWS CLI 인자로 JSON을 직접 전달했을 때 내부 따옴표가 제거되어 잘못된 JSON이 전송됐습니다.
+- Lambda log에서 `JSONDecodeError`를 확인해 인프라 권한이나 S3 문제가 아닌 입력 직렬화 문제로 구분했습니다.
+- 인자 배열을 보존하는 방식으로 다시 전송한 정상 이벤트는 SQS → Lambda → S3 경로를 통과했습니다.
+
+다음 단계:
+
+- Glue Data Catalog database와 external table
+- 날짜·이벤트 종류 partition projection
+- Athena 전용 workgroup과 암호화된 query result
+- 일별 이벤트 수, 평균 대기 시간, 예약 전환율 named query
+- 실제 Athena query 실행과 결과 검증
