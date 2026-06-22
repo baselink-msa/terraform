@@ -538,7 +538,7 @@ $messageFile = Join-Path $env:TEMP "amazon-q-backup-alert-test.json"
     summary  = "AWS Backup alert path test"
     enableCustomActions = $false
   }
-} | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $messageFile
+} | ConvertTo-Json -Depth 10 | Set-Content -Encoding ascii $messageFile
 
 aws sns publish `
   --topic-arn arn:aws:sns:ap-northeast-2:740831361032:baselink-dev-ops-alerts `
@@ -558,9 +558,29 @@ Remove-Item -LiteralPath $messageFile
 주의:
 
 - PowerShell에서 JSON 문자열을 `--message $message`로 직접 전달하면 따옴표가 제거될 수 있습니다.
+- Windows PowerShell 5.1의 `Set-Content -Encoding utf8`은 BOM을 추가해 AWS CLI `file://` 읽기가 실패할 수 있습니다. 현재 영문 테스트 payload는 `-Encoding ascii`를 사용합니다.
 - Amazon Q 오류 로그에 `{version:1.0,...}`처럼 key의 큰따옴표가 없는 payload가 보이면 JSON 전달 방식 문제입니다.
 - JSON 파일을 만들고 `--message file://<path>`로 전달하면 원형을 보존할 수 있습니다.
 - SNS topic policy에는 EventBridge뿐 아니라 `cloudwatch.amazonaws.com`의 `SNS:Publish` 권한도 유지해야 기존 DLQ/RDS/Valkey/WAF alarm이 계속 전달됩니다.
+
+### 2026-06-22 알림 경로 검증 결과
+
+발견한 문제:
+
+- EventBridge 발행 권한을 추가하면서 기존 CloudWatch Alarm의 SNS 발행 권한이 topic policy에서 누락됐습니다.
+- CloudWatch Alarm history에 `CloudWatch Alarms is not authorized to perform SNS:Publish` 오류가 기록됐습니다.
+- 첫 custom 테스트는 PowerShell 인라인 JSON의 큰따옴표가 제거되어 Amazon Q에서 unsupported event로 거부됐습니다.
+- 두 번째 파일 테스트는 Windows PowerShell UTF-8 BOM 때문에 AWS CLI가 파일을 읽지 못했습니다.
+
+수정과 검증:
+
+- SNS topic policy에 `cloudwatch.amazonaws.com`의 `SNS:Publish` 권한을 복구했습니다.
+- Source account와 서울 리전 CloudWatch alarm ARN으로 권한 범위를 제한했습니다.
+- Backup/Copy/Restore EventBridge target에는 Amazon Q custom notification Input Transformer가 적용됐습니다.
+- DLQ alarm을 수동 `ALARM → OK`로 전환했고 두 action 모두 `Successfully executed action`을 확인했습니다.
+- BOM 없는 JSON 파일로 custom notification을 발행했습니다.
+- SNS 지표에서 3건 전달, 전달 실패 0건을 확인했습니다.
+- custom 재발행 후 Amazon Q 오류 로그가 추가되지 않았습니다.
 
 ## 10. 발표용 요약
 
