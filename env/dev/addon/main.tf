@@ -291,6 +291,16 @@ resource "aws_iam_role_policy" "robusta_bedrock" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = "arn:aws:bedrock:ap-northeast-2::foundation-model/*"
+      },
+      {
+        Sid    = "MarketplaceSubscription"
+        Effect = "Allow"
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+          "aws-marketplace:Unsubscribe"
+        ]
+        Resource = "*"
       }
     ]
   })
