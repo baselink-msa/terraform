@@ -280,7 +280,7 @@ KEDA 변경안:
 | Capacity Advisor | 처리량 근거가 있는 입장 정책 추천 | JSON/Markdown 보고서와 합성 표본 검증 완료 |
 | 실제 부하 테스트 기반 Advisor 재계산 | 합성 수치 대신 운영 가능한 근거 확보 | 진행 예정 |
 | RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
-| Backup/Restore 실패 알림 | 백업 실패 조기 발견 | EventBridge/SNS 배포 및 테스트 발행 완료 |
+| Backup/Restore 실패 알림 | 백업 실패 조기 발견 | EventBridge transformer, SNS 권한, 전달 지표 검증 완료 |
 | RDS PITR와 복원 endpoint smoke test | 논리 장애 복구 및 연결 전환 증명 | 완료, DB RTO 약 7분 21초 |
 | AWS Backup 도쿄 cross-region copy | 서울 리전 장애 대비 | P1 최우선 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |
