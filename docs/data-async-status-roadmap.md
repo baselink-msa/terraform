@@ -236,7 +236,7 @@ PITR은 기존 DB를 되감지 않습니다.
 - 명시적 RDS ARN 기반 Backup Selection
 - 매일 04:00 KST snapshot
 - 7일 보존
-- 도쿄 KMS/vault와 14일 Cross-region Copy Terraform 구현·배포 대기
+- 도쿄 KMS/vault와 14일 Cross-region Copy 배포·on-demand copy 검증 완료
 
 ### 7.3 복원 리허설
 
@@ -257,7 +257,7 @@ PITR은 기존 DB를 되감지 않습니다.
 
 - 자동 데이터 검증 스크립트
 - 복구 리허설 정기 실행
-- 도쿄 copy job 및 recovery point 확인
+- scheduled daily copy 자동 생성 확인
 - 도쿄 recovery point 복원 리허설
 - 복원 리소스 자동 정리 보호 장치
 
@@ -300,7 +300,7 @@ DR 리전 인프라 준비
 남은 작업:
 
 - DR 리전용 Terraform tfvars
-- AWS Backup Cross-region Copy 배포와 복원 검증
+- AWS Backup scheduled Cross-region Copy 확인과 도쿄 복원 검증
 - ECR/S3 Cross-region Replication
 - Secrets 동기화
 - Route 53 또는 CloudFront failover

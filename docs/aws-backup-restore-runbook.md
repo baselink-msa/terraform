@@ -444,3 +444,34 @@ aws backup list-recovery-points-by-backup-vault `
 - 실패 시 `baselink-dev-copy-job-failure` EventBridge rule이 `aws-alerts` 채널로 알림을 보냅니다.
 
 첫 scheduled copy를 기다리지 않고 검증해야 한다면 서울 recovery point를 선택해 on-demand copy를 실행할 수 있습니다. 실제 복원 리허설은 도쿄 VPC, DB subnet group, security group을 준비한 뒤 별도 임시 RDS identifier로 수행합니다.
+
+### 16.1 실제 Cross-Region Copy 결과 - 2026-06-22
+
+| 항목 | 결과 |
+| --- | --- |
+| Source Region | `ap-northeast-2` 서울 |
+| Destination Region | `ap-northeast-1` 도쿄 |
+| Copy Job ID | `4413572b-ca09-44d7-8d7d-fa95a881b702` |
+| 시작 시각 | 2026-06-22 22:54:40 KST |
+| 완료 시각 | 2026-06-22 23:01:46 KST |
+| 소요 시간 | 약 7분 6초 |
+| 결과 | `COMPLETED` |
+| Destination Vault | `baselink-dev-tokyo-backup-vault` |
+| 보존 | 14일, 2026-07-06 04:00 KST 삭제 예정 |
+| 암호화 | 도쿄 고객 관리형 KMS key |
+
+검증한 내용:
+
+- 도쿄 vault에 recovery point 1개 생성
+- destination recovery point 상태 `COMPLETED`
+- `IsEncrypted = true`
+- KMS key rotation 활성화, 365일 주기
+- 서울 source recovery point는 그대로 유지
+- 운영 RDS endpoint와 데이터 변경 없음
+
+남은 검증:
+
+- 다음 daily backup에서 scheduled copy job 자동 생성 확인
+- 도쿄 네트워크와 DB subnet group 준비
+- 도쿄 recovery point에서 임시 RDS 복원
+- 복원 DB 데이터와 임시 backend smoke test

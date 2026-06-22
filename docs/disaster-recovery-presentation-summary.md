@@ -282,7 +282,7 @@ KEDA 변경안:
 | RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
 | Backup/Restore 실패 알림 | 백업 실패 조기 발견 | EventBridge transformer, SNS 권한, 전달 지표 검증 완료 |
 | RDS PITR와 복원 endpoint smoke test | 논리 장애 복구 및 연결 전환 증명 | 완료, DB RTO 약 7분 21초 |
-| AWS Backup 도쿄 cross-region copy | 서울 리전 장애 대비 | Terraform 구현·plan 완료, 배포 대기 |
+| AWS Backup 도쿄 cross-region copy | 서울 리전 장애 대비 | 배포 및 실제 copy 완료, 약 7분 6초 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |
 | SQS SSE 명시 관리 | 메시지 암호화 정책 명확화 | 중 |
 | DR 리전 Terraform plan | 리전 장애 시 인프라 재구성 시간 단축 | P1 최우선 |

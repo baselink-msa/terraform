@@ -137,7 +137,7 @@ env/dev/infra/
 - `baselink-dev-backup-vault`에 recovery point 8개가 존재합니다.
 - Backup/Copy/Restore 실패 EventBridge와 기존 ops SNS 연동을 배포하고 Slack 전달까지 검증했습니다.
 - Vault Lock은 아직 적용하지 않았습니다.
-- 도쿄 cross-region copy는 Terraform 구현과 plan 검증을 완료했으며 배포를 기다리고 있습니다.
+- 도쿄 cross-region copy를 배포하고 실제 on-demand copy job으로 검증했습니다.
 
 ## 8. 비용 고려
 
@@ -204,7 +204,18 @@ Terraform 구현 상태:
 - 도쿄 KMS key는 rotation을 활성화하고 삭제 대기 기간을 30일로 설정했습니다.
 - 도쿄 vault와 KMS key ARN을 Terraform output으로 노출했습니다.
 - 격리 plan 결과는 리소스 3개 생성, 기존 backup plan 1개 제자리 수정, 삭제 0입니다.
-- 첫 자동 copy는 배포 이후 다음 daily backup부터 발생합니다.
+- scheduled copy는 다음 daily backup부터 자동 발생합니다.
+
+2026-06-22 실제 copy 검증:
+
+- 서울 recovery point를 도쿄 vault로 on-demand copy했습니다.
+- copy job `4413572b-ca09-44d7-8d7d-fa95a881b702`이 `COMPLETED` 상태로 종료됐습니다.
+- 리전 간 copy 소요 시간은 약 7분 6초였습니다.
+- 도쿄 recovery point는 고객 관리형 KMS key로 암호화됐습니다.
+- 도쿄 보존 종료 시각은 2026-07-06 04:00 KST로 14일 정책과 일치합니다.
+- KMS 자동 rotation은 활성화됐고 주기는 365일입니다.
+
+이번 on-demand copy는 이미 04:00에 생성된 recovery point를 22:54에 수동 복사한 테스트입니다. 따라서 원본 생성 시각과 copy 시작 시각의 차이는 scheduled 정책의 RPO 측정값이 아닙니다. 리전 장애 목표 RPO는 daily scheduled copy 기준 최대 24시간이며, 이번에 측정한 값은 리전 간 copy 처리 시간입니다.
 
 cross-region copy 정책 예시:
 
@@ -221,7 +232,7 @@ cross-region copy 정책 예시:
 1. 현재 구성과 문서 동기화
 2. Backup/Restore 실패 알림 배포와 Slack 전달 검증
 3. RDS native PITR와 backend smoke test
-4. 도쿄 backup vault와 cross-region copy 배포 및 copy job 확인
+4. 도쿄 backup vault와 cross-region copy 배포 및 copy job 확인 — 완료
 5. 도쿄 recovery point 복원 리허설
 6. DR 인프라 Terraform plan과 endpoint 전환 Runbook
 
