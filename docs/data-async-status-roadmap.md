@@ -309,6 +309,7 @@ DR 리전 인프라 준비
 남은 작업:
 
 - 도쿄 VPC/subnet/DB subnet group/security group 배포
+- DR 리전용 Terraform tfvars
 - AWS Backup scheduled Cross-region Copy 확인과 도쿄 복원 검증
 - ECR/S3 Cross-region Replication
 - Secrets 동기화
