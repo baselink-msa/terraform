@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    aws = {
+      source                = "hashicorp/aws"
+      configuration_aliases = [aws.use1]
+    }
+  }
+}
+
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
   common_tags = merge(var.tags, {
@@ -145,21 +154,6 @@ resource "aws_sqs_queue" "events" {
   tags = local.common_tags
 }
 
-resource "aws_sqs_queue_policy" "events" {
-  queue_url = aws_sqs_queue.events.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "AllowEventBridge"
-      Effect    = "Allow"
-      Principal = { Service = "events.amazonaws.com" }
-      Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.events.arn
-    }]
-  })
-}
-
 # ────────────────────────────────────────────────────────────────────
 # EventBridge — CloudTrail 변경성 이벤트 수신
 # ────────────────────────────────────────────────────────────────────
@@ -203,6 +197,84 @@ resource "aws_cloudwatch_event_target" "to_sqs" {
   rule      = aws_cloudwatch_event_rule.cloudtrail_changes.name
   target_id = "send-to-sqs"
   arn       = aws_sqs_queue.events.arn
+}
+
+# ────────────────────────────────────────────────────────────────────
+# EventBridge (us-east-1) — IAM/S3/KMS 글로벌 서비스 이벤트 수신
+# 글로벌 서비스 CloudTrail 이벤트는 us-east-1 EventBridge에만 전달됨
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "global_service_changes" {
+  provider = aws.use1
+
+  name        = "${local.name_prefix}-global-service-changes"
+  description = "Capture IAM/S3/KMS global service CloudTrail events (us-east-1 only)"
+
+  event_pattern = jsonencode({
+    source      = ["aws.iam", "aws.s3", "aws.kms", "aws.sts"]
+    detail-type = ["AWS API Call via CloudTrail"]
+    detail = {
+      readOnly = [false]
+      eventName = [
+        { "prefix" : "Create" },
+        { "prefix" : "Delete" },
+        { "prefix" : "Update" },
+        { "prefix" : "Put" },
+        { "prefix" : "Attach" },
+        { "prefix" : "Detach" },
+        { "prefix" : "Add" },
+        { "prefix" : "Remove" },
+        { "prefix" : "Enable" },
+        { "prefix" : "Disable" },
+        { "prefix" : "Schedule" }
+      ]
+    }
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "global_to_sqs" {
+  provider = aws.use1
+
+  rule      = aws_cloudwatch_event_rule.global_service_changes.name
+  target_id = "send-to-sqs-cross-region"
+  arn       = aws_sqs_queue.events.arn
+}
+
+# SQS policy: allow us-east-1 EventBridge to send messages
+resource "aws_sqs_queue_policy" "events" {
+  queue_url = aws_sqs_queue.events.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowEventBridgeRegional"
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.events.arn
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = aws_cloudwatch_event_rule.cloudtrail_changes.arn
+          }
+        }
+      },
+      {
+        Sid       = "AllowEventBridgeGlobal"
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.events.arn
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = aws_cloudwatch_event_rule.global_service_changes.arn
+          }
+        }
+      }
+    ]
+  })
 }
 
 # ────────────────────────────────────────────────────────────────────

@@ -8,6 +8,11 @@
 module "change_auditor" {
   source = "../../../modules/change-auditor"
 
+  providers = {
+    aws      = aws
+    aws.use1 = aws.use1
+  }
+
   project_name       = "change-auditor"
   environment        = var.environment
   aws_region         = var.aws_region
