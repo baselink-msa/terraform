@@ -794,3 +794,49 @@ result = INSUFFICIENT_DATA
 ```
 
 표본이 부족한 상태에서 임의의 추천값을 생성하지 않고 기존 정책 유지를 권고하는 것을 확인했습니다.
+
+### 2026-06-22: 대기열 이벤트 E2E와 합성 표본 검증
+
+실제 API E2E:
+
+1. `POST /api/waiting-room/games/1/enter`
+2. 최초 순번 `1` 확인
+3. `POST /api/waiting-room/games/1/issue-token`
+4. 토큰 발급 성공
+5. 토큰 반납
+6. `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED` S3 적재 확인
+7. Athena에서 평균 대기시간 `4초` 조회
+
+합성 표본:
+
+```text
+producer = capacity-load-test
+WAITING_ENTERED = 40
+ACCESS_TOKEN_ISSUED = 40
+RESERVATION_REQUESTED = 40
+RESERVATION_CONFIRMED = 32
+conversion = 80%
+```
+
+합성 표본은 실제 운영 이벤트와 섞이지 않도록 producer filter로 분리합니다.
+
+Capacity Advisor 검증 결과:
+
+```text
+stable confirmed throughput = 4건/분
+average waiting = 55.7초
+average observed admission = 31.9명/분
+current DB connections = 19/60
+DB pressure = NORMAL
+recommended policy = 4명/분
+confidence = MEDIUM
+```
+
+추천값이 4명/분인 이유는 합성 시나리오가 예약 확정을 분당 4건으로 분산해 생성했기 때문입니다. 이는 계산기가 단순히 총 표본 수만 보는 것이 아니라 시간당 안정 처리량을 반영한다는 것을 검증합니다.
+
+주의:
+
+- 합성 데이터는 파이프라인과 계산 공식 검증용입니다.
+- 합성 데이터로 계산한 추천값을 실제 운영 정책의 근거로 사용하지 않습니다.
+- 실제 정책값은 부하 테스트 또는 실제 운영 이벤트만 필터링해 다시 계산해야 합니다.
+- `capacity-load-test` producer 데이터는 발표에서 시뮬레이션 결과로 명확히 표시합니다.

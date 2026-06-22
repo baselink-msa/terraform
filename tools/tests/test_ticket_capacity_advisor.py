@@ -23,6 +23,7 @@ class CapacityAdvisorTest(unittest.TestCase):
             "average_waiting_seconds": 60.0,
             "average_effective_enter_per_minute": 40.0,
             "current_db_connections": 20,
+            "producer_filter": None,
         }
         values.update(overrides)
         return advisor.CapacityInputs(**values)

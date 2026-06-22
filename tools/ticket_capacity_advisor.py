@@ -25,6 +25,7 @@ class CapacityInputs:
     average_effective_enter_per_minute: float
     current_db_connections: int
     db_connection_budget: int = 60
+    producer_filter: str | None = None
 
 
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
@@ -61,6 +62,7 @@ def calculate_recommendation(
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "gameId": inputs.game_id,
         "lookbackDays": inputs.lookback_days,
+        "producerFilter": inputs.producer_filter,
         "currentPolicyEnterPerMinute": inputs.current_policy_enter_per_minute,
         "currentDbConnections": inputs.current_db_connections,
         "dbConnectionBudget": inputs.db_connection_budget,
@@ -223,14 +225,21 @@ def collect_athena_inputs(
     database: str,
     workgroup: str,
     region: str,
+    producer_filter: str | None = None,
 ) -> CapacityInputs:
     start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
+    producer_condition = (
+        "AND producer = '" + producer_filter.replace("'", "''") + "'"
+        if producer_filter
+        else ""
+    )
     query = f"""
     WITH base AS (
       SELECT *
       FROM ticket_events
       WHERE event_date >= '{start_date.isoformat()}'
         AND gameId = {game_id}
+        {producer_condition}
     ),
     confirmed_per_minute AS (
       SELECT date_trunc('minute', from_iso8601_timestamp(occurredAt)) AS minute,
@@ -267,6 +276,7 @@ def collect_athena_inputs(
         average_waiting_seconds=float(values[5] or 0),
         average_effective_enter_per_minute=float(values[6] or 0),
         current_db_connections=current_db_connections,
+        producer_filter=producer_filter,
     )
 
 
@@ -300,6 +310,10 @@ def main() -> None:
     parser.add_argument("--database", default="baselink_dev_ticket_events")
     parser.add_argument("--workgroup", default="baselink-dev-ticket-events")
     parser.add_argument("--region", default="ap-northeast-2")
+    parser.add_argument(
+        "--producer-filter",
+        help="Only analyze events from this producer, for example capacity-load-test.",
+    )
     parser.add_argument("--output-dir", default="capacity-reports")
     args = parser.parse_args()
 
@@ -311,6 +325,7 @@ def main() -> None:
         args.database,
         args.workgroup,
         args.region,
+        args.producer_filter,
     )
     report = calculate_recommendation(inputs, args.minimum_samples)
     output_dir = Path(args.output_dir)
