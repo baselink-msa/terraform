@@ -143,6 +143,16 @@ output "ticket_domain_events_dlq_arn" {
   value       = module.sqs_ticket_domain_events.dead_letter_queue_arn
 }
 
+output "ticket_event_bucket_name" {
+  description = "S3 bucket containing partitioned ticket event JSON objects."
+  value       = module.ticket_event_writer.bucket_name
+}
+
+output "ticket_event_writer_function_name" {
+  description = "Name of the Lambda that writes ticket events to S3."
+  value       = module.ticket_event_writer.lambda_function_name
+}
+
 output "ops_alerts_sns_topic_arn" {
   description = "SNS topic ARN used for team operations alerts."
   value       = var.enable_slack_alerts ? aws_sns_topic.ops_alerts[0].arn : null

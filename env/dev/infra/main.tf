@@ -172,6 +172,7 @@ module "sqs_ticket_domain_events" {
   message_retention_seconds                   = 345600
   dead_letter_queue_message_retention_seconds = 1209600
   receive_wait_time_seconds                   = 20
+  visibility_timeout_seconds                  = 180
   sqs_managed_sse_enabled                     = true
 
   create_dead_letter_queue_alarm     = true

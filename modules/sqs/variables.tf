@@ -26,6 +26,12 @@ variable "receive_wait_time_seconds" {
   default = 0
 }
 
+variable "visibility_timeout_seconds" {
+  description = "How long a received message remains invisible while a consumer processes it."
+  type        = number
+  default     = 30
+}
+
 variable "sqs_managed_sse_enabled" {
   description = "Whether to enable Amazon SQS managed server-side encryption."
   type        = bool
