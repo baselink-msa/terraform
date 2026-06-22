@@ -1,8 +1,10 @@
 # AWS Backup 설계
 
-이 문서는 Baselink 프로젝트의 AWS Backup 도입 설계를 정리합니다.
+이 문서는 Baselink 프로젝트의 AWS Backup 구현과 리전 DR 확장 설계를 정리합니다.
 
 목표는 RDS PostgreSQL 백업을 중앙 정책으로 관리하고, 이후 리전 DR 전략으로 확장할 수 있는 기반을 만드는 것입니다.
+
+최종 상태 확인일: 2026-06-22
 
 ## 1. 도입 목적
 
@@ -10,7 +12,7 @@
 
 - 백업 정책을 Terraform으로 표준화할 수 있습니다.
 - backup vault, backup plan, backup selection을 한 곳에서 관리할 수 있습니다.
-- 태그 기반으로 백업 대상을 선택할 수 있습니다.
+- 현재는 RDS ARN을 명시적으로 지정해 의도하지 않은 리소스가 백업 대상에 포함되지 않게 합니다.
 - 필요 시 cross-region copy로 DR 리전에 백업을 보관할 수 있습니다.
 - on-demand backup과 restore 테스트를 운영 절차로 만들 수 있습니다.
 
@@ -35,9 +37,9 @@ AWS Backup은 RDS에 대해 continuous backup과 PITR을 지원합니다.
 
 ## 3. 적용 범위
 
-### 이번 단계
+### 현재 적용
 
-이번 단계에서는 RDS PostgreSQL을 AWS Backup 대상으로 설계합니다.
+RDS PostgreSQL을 AWS Backup 대상으로 적용했습니다.
 
 대상:
 
@@ -64,12 +66,12 @@ dev 환경은 비용을 줄이는 것이 중요하므로 처음부터 모든 DR 
 | 구분 | dev 적용안 | 운영 가정 |
 | --- | --- | --- |
 | Backup vault | 1개 | 환경별 또는 계정별 분리 |
-| Continuous backup | 7일 | 7~35일 |
+| Continuous backup | RDS native PITR 7일 | 7~35일 |
 | Daily snapshot | 7일 | 14~30일 |
 | Cross-region copy | 초기에는 비활성 | 활성 권장 |
 | Cold storage | 사용 안 함 | 장기 보존 snapshot에 한해 검토 |
-| Backup selection | 태그 기반 | 태그 기반 |
-| Restore test | 수동 리허설 | 정기 리허설 |
+| Backup selection | 명시적 RDS ARN | 태그 또는 ARN 기반 |
+| Restore test | 2026-06-16 수동 리허설 완료 | 정기 리허설 |
 
 ## 5. RPO/RTO
 
@@ -105,9 +107,9 @@ env/dev/infra/
 - dev 환경에서는 별도 backup layer를 두기보다 리뷰와 적용 흐름이 단순합니다.
 - 나중에 backup 대상이 늘어나면 `env/dev/backup` 레이어로 분리할 수 있습니다.
 
-## 7. Terraform 리소스 설계
+## 7. Terraform 구현 상태
 
-생성할 리소스:
+생성된 리소스:
 
 - `aws_backup_vault`
 - `aws_backup_plan`
@@ -115,47 +117,27 @@ env/dev/infra/
 - `aws_iam_role`
 - `aws_iam_role_policy_attachment`
 
-초기 plan rule:
+현재 plan rule:
 
 | Rule | schedule | lifecycle | 목적 |
 | --- | --- | --- | --- |
-| `continuous-rds-7d` | continuous | delete after 7 days | PITR |
 | `daily-rds-snapshot-7d` | cron daily | delete after 7 days | 일 단위 복구/검증 |
 
-주의:
+역할 분리:
 
-- AWS Backup continuous backup은 RDS automated backup 설정과 역할이 겹칠 수 있습니다.
-- 기존 RDS `backup_retention_period = 7`과 AWS Backup continuous backup을 동시에 어떻게 운영할지 팀 리뷰가 필요합니다.
-- AWS Backup이 continuous backup을 관리하면 RDS backup window 제어 방식이 달라질 수 있습니다.
+- RDS native automated backup은 7일 PITR을 담당합니다.
+- AWS Backup은 매일 04:00 KST snapshot과 recovery point 중앙 관리를 담당합니다.
+- Backup Selection은 `module.rds.db_instance_arn`을 명시적으로 전달합니다.
+- vault는 KMS key로 암호화되어 있습니다.
 
-따라서 첫 Terraform 구현은 두 가지 방식 중 하나를 선택합니다.
+2026-06-22 확인 결과:
 
-### 방식 A: Snapshot backup부터 도입
-
-특징:
-
-- AWS Backup vault/plan/selection을 먼저 검증합니다.
-- RDS native PITR은 현재 설정을 유지합니다.
-- AWS Backup은 daily snapshot만 담당합니다.
-- 기존 RDS backup window 정책과 충돌 가능성이 낮습니다.
-
-추천:
-
-- dev 첫 적용에는 방식 A를 추천합니다.
-- 이번 Terraform 구현은 방식 A를 적용합니다.
-
-### 방식 B: AWS Backup continuous backup까지 도입
-
-특징:
-
-- AWS Backup이 RDS PITR 관리까지 담당합니다.
-- 중앙 백업 정책 관점에서는 더 일관됩니다.
-- 기존 RDS automated backup 설정과 운영 방식이 달라질 수 있습니다.
-- 최초 PITR 활성화나 retention 변경은 maintenance window 영향을 받을 수 있습니다.
-
-추천:
-
-- 방식 A 검증 후 운영 가정으로 확장할 때 검토합니다.
+- 2026-06-16부터 2026-06-22까지 daily backup job이 연속으로 `COMPLETED` 상태입니다.
+- 최신 2026-06-22 04:00 KST 작업은 04:28 KST에 완료됐습니다.
+- `baselink-dev-backup-vault`에 recovery point 8개가 존재합니다.
+- Backup/Copy/Restore 실패 EventBridge와 기존 ops SNS 연동은 Terraform 구현과 격리 plan 검증을 완료했으며 배포를 기다리고 있습니다.
+- Vault Lock은 아직 적용하지 않았습니다.
+- cross-region copy job은 아직 없습니다.
 
 ## 8. 비용 고려
 
@@ -169,18 +151,18 @@ env/dev/infra/
 dev 비용 절감 원칙:
 
 - snapshot retention은 7일로 시작합니다.
-- cross-region copy는 설계만 먼저 하고 바로 켜지 않습니다.
+- cross-region copy는 도쿄 리전에 14일 보존으로 적용하고 비용을 관찰합니다.
 - on-demand backup은 리허설이 필요할 때만 생성합니다.
 - 복원 테스트 후 생성된 RDS restore instance는 즉시 정리합니다.
 
-## 9. Restore 테스트 계획
+## 9. Restore 테스트 결과와 남은 검증
 
-테스트 목적:
+2026-06-16 완료:
 
-- recovery point가 실제 생성되는지 확인합니다.
-- snapshot restore로 새 RDS를 만들 수 있는지 확인합니다.
-- 복원 DB에 접속해 schema와 핵심 데이터가 있는지 확인합니다.
-- 테스트 후 복원 DB를 삭제합니다.
+- recovery point에서 `baselink-dev-postgres-restore-20260616` 임시 RDS 복원
+- EKS 내부 Pod에서 PostgreSQL 접속
+- 주요 schema, table, row count 검증
+- 복원 DB 삭제와 잔여 리소스 정리
 
 테스트 절차:
 
@@ -197,21 +179,24 @@ dev 비용 절감 원칙:
 
 상세 복구 절차는 `docs/aws-backup-restore-runbook.md`를 따릅니다.
 
-## 10. Cross-Region DR 확장안
+남은 검증:
 
-초기 구현에서는 cross-region copy를 비활성화합니다.
+- RDS native PITR로 임의 시점 복원
+- 임시 backend deployment를 복원 DB endpoint에 연결
+- 핵심 조회 API와 쓰기 차단 상태 smoke test
+- 측정 RPO/RTO 기록
 
-향후 활성화 기준:
+## 10. Cross-Region DR 구현안
 
-- 팀이 DR 리전을 확정합니다.
+DR 리전은 `ap-northeast-1` 도쿄로 정합니다.
+
+구현 범위:
+
 - DR 리전 backup vault를 생성합니다.
-- KMS key와 IAM role을 준비합니다.
-- cross-region copy retention을 정합니다.
-
-추천 DR 리전:
-
-- 1순위: `ap-northeast-1` Tokyo
-- 2순위: `ap-southeast-1` Singapore
+- DR 리전 KMS key를 생성하거나 AWS Backup 기본 key 사용 여부를 명시합니다.
+- 서울 daily rule에 도쿄 vault 대상 `copy_action`을 추가합니다.
+- 복사본 보존 기간은 dev 기준 14일로 시작합니다.
+- Backup/Copy/Restore 실패 이벤트를 기존 ops SNS와 Slack으로 전달합니다.
 
 cross-region copy 정책 예시:
 
@@ -220,22 +205,21 @@ cross-region copy 정책 예시:
 | Source region | `ap-northeast-2` |
 | Destination region | `ap-northeast-1` |
 | Copy 대상 | daily RDS snapshot |
-| Retention | 14~30일 |
+| Retention | dev 14일 |
 | Continuous backup copy | transaction log copy가 아닌 snapshot copy 기준 |
 
 ## 11. 구현 우선순위
 
-1. AWS Backup 설계 문서 리뷰
-2. `modules/backup` 작성
-3. dev infra에서 RDS daily snapshot backup 적용
-4. backup vault와 recovery point 생성 확인
-5. on-demand restore 리허설
-6. cross-region copy 설계 확정
-7. cross-region copy Terraform 추가
+1. 현재 구성과 문서 동기화
+2. Backup/Restore 실패 알림 배포와 Slack 전달 검증
+3. RDS native PITR와 backend smoke test
+4. 도쿄 backup vault와 cross-region copy
+5. 도쿄 recovery point 복원 리허설
+6. DR 인프라 Terraform plan과 endpoint 전환 Runbook
 
 ## 12. 발표 포인트
 
 - RDS 자체 PITR만 사용하는 것이 아니라 AWS Backup을 통해 중앙 백업 정책을 설계했습니다.
-- dev 환경에서는 비용을 고려해 daily snapshot부터 시작하고, 운영 환경에서는 continuous backup과 cross-region copy로 확장할 수 있게 설계했습니다.
+- dev 환경에서는 RDS native PITR과 AWS Backup daily snapshot의 역할을 분리했고, 실제 복원 리허설로 recovery point가 사용 가능한지 검증했습니다.
 - RPO/RTO를 먼저 정의한 뒤 backup retention과 restore 절차를 결정했습니다.
-- 리전 장애에 대비해 DR 리전에 snapshot copy를 보관하는 방향을 제시했습니다.
+- 다음 단계에서는 도쿄 리전에 snapshot을 실제 복사하고 복원해 단일 리전 한계를 제거합니다.

@@ -48,7 +48,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | DR | 일부 검증 완료 | AZ/논리 장애 대응 완료, 리전 DR은 설계 단계 |
 | Connection Pool | 검증 완료 | Spring/Python/KEDA 전체 app budget 60 적용 |
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
-| 운영 모니터링 | 일부 검증 완료 | 대시보드와 CloudWatch 알람 구성, 일부 Alert Rule 검증 필요 |
+| 운영 모니터링 | 일부 검증 완료 | 대시보드와 CloudWatch 알람 구성, AWS Backup 실패 EventBridge 구현·배포 대기 |
 | 발표/Runbook | 진행 중 | 구현 상태 동기화 완료, 감속 전용 Runbook과 최종 증거 캡처 필요 |
 | 개인 프로젝트 | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor E2E 및 실패 경로 검증 |
 
@@ -233,7 +233,7 @@ PITR은 기존 DB를 되감지 않습니다.
 
 - Backup Vault
 - Backup Plan
-- 태그 기반 Backup Selection
+- 명시적 RDS ARN 기반 Backup Selection
 - 매일 04:00 KST snapshot
 - 7일 보존
 - Cross-region Copy 미적용
@@ -631,6 +631,8 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 | 작업 | 이유 | 완료 조건 |
 | --- | --- | --- |
 | 현재 문서와 발표 요약 최신화 | 실제 구현과 발표 내용 불일치 방지 | Python pool, 자동 감속, 최신 검증 결과가 모든 요약 문서에 일치 |
+| Backup/Restore 실패 알림 | 백업 실패를 늦게 발견하면 실제 RPO가 목표보다 커짐 | 실패 이벤트가 기존 ops Slack 채널까지 전달 |
+| RDS PITR 및 복원 endpoint 검증 | snapshot 복원 외 논리 장애와 서비스 연결 전환 증거 필요 | 임의 시점 복원, DB 검증, 임시 backend smoke test 완료 |
 | Python pool/자동 감속 Alert Rule 검증 | 기능은 있지만 장애 통지 검증이 부족함 | Warning/Critical 테스트 알림이 Slack까지 전달 |
 | 자동 감속 장애 대응 Runbook | 평가 시 운영 대응 질문에 대비 | NORMAL~STOP, DB 조회 실패, 복구 절차가 명시됨 |
 | 핵심 부하 테스트 1회 | pool/KEDA/입장량 수치의 근거 확보 | 안정·경고 구간의 처리량, connection, latency 기록 |
@@ -641,6 +643,7 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 
 | 작업 | 이유 | 완료 조건 |
 | --- | --- | --- |
+| 도쿄 Pilot Light 리전 DR | 재해복구 담당 범위를 리전 장애까지 확장 | cross-region copy, DR plan, 복원 리허설, endpoint 전환 Runbook 완료 |
 | Read Replica 설계 문서 | 조회 확장 질문에 대한 근거 있는 답변 | 읽기 API, 일관성, lag, fallback, 비용 정리 |
 | RDS Proxy 타당성 검토 | connection storm 대응 질문에 대비 | 현재 pool 방식과 Proxy 비교 및 도입 조건 정의 |
 | Connection 진단 스크립트 | 장애 원인 수집 시간 단축 | 전체/서비스별 connection과 장기 쿼리를 한 번에 출력 |
@@ -650,8 +653,6 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 
 - RDS 저장 암호화 마이그레이션
 - Valkey TLS/AUTH 전환
-- AWS Backup Cross-region Copy
-- DR 리전 tfvars
 - 실제 Read Replica 또는 RDS Proxy 생성
 - Valkey failover 리허설
 - 승인형 자동 변경
