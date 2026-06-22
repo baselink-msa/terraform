@@ -25,3 +25,15 @@ variable "ecr_force_delete" {
   type        = bool
   default     = false
 }
+
+variable "ecr_replication_enabled" {
+  description = "Whether repositories matching the environment prefix are replicated to the DR Region."
+  type        = bool
+  default     = true
+}
+
+variable "ecr_replication_region" {
+  description = "AWS Region receiving replicated ECR images for disaster recovery."
+  type        = string
+  default     = "ap-northeast-1"
+}
