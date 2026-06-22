@@ -138,6 +138,31 @@ data "aws_iam_policy_document" "ops_alerts_topic" {
       values   = [for rule in aws_cloudwatch_event_rule.backup_failure : rule.arn]
     }
   }
+
+  statement {
+    sid    = "AllowCloudWatchAlarmActions"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.ops_alerts[0].arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:*"]
+    }
+  }
 }
 
 resource "aws_sns_topic_policy" "ops_alerts" {
