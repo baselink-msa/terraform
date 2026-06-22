@@ -178,11 +178,52 @@ docker push "${tokyo}/${repository}:${tag}"
 
 ## 10. 완료 기준
 
-- 도쿄 repository 9개 생성
-- 서울 registry의 `dev-` replication rule 배포
-- 신규 image tag 1개 이상 자동 복제
-- 서울/도쿄 digest 일치
-- 현재 GitOps 활성 tag 9개 bootstrap
+- 도쿄 repository 9개 생성 — 완료
+- 서울 registry의 `dev-` replication rule 배포 — 완료
+- 신규 image tag 1개 이상 자동 복제 — 완료
+- 서울/도쿄 digest 일치 — 완료
+- 현재 GitOps 활성 tag 9개 bootstrap — 완료
 - DR overlay가 도쿄 ECR URI를 사용
 
 이 작업이 완료되면 서울 리전 전체 장애 중에도 도쿄 EKS가 backend image를 도쿄 내부에서 pull할 수 있어, build pipeline 없이 애플리케이션 복구를 시작할 수 있습니다.
+
+## 11. 실제 배포와 복제 검증 - 2026-06-23
+
+Terraform Apply Dev run `27963663005`에서 ECR 레이어를 배포했고 전체 workflow가 `success`로 완료됐습니다.
+
+배포 결과:
+
+- 도쿄 ECR repository 9개 생성
+- 모든 repository의 scan on push 활성화
+- tag mutability `MUTABLE`
+- 암호화 `AES256`
+- 서울 registry에 destination `ap-northeast-1`, filter `dev-` replication rule 생성
+- 서울 repository 변경·삭제 없음
+
+신규 image 자동 복제 테스트:
+
+- repository: `dev-ticket-service`
+- 임시 tag: `dr-replication-test-20260623`
+- OCI multi-architecture image index 사용
+- 서울 digest: `sha256:8f0a13279228ecc3f43971d5316c5a1c2f3cb09a3e67b14daee2f448e6db5e18`
+- 도쿄 digest: 서울과 동일
+- 복제 확인 시간: 약 30초
+- 검증 후 임시 tag를 양쪽에서 삭제
+
+기존 GitOps 활성 image bootstrap:
+
+| Repository | GitOps Tag | Digest 검증 |
+| --- | --- | --- |
+| `dev-admin-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-ai-chatbot-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-auth-service` | `8a8bdfe60d84d5d4103b22f2ef0e51399eba6635` | 일치 |
+| `dev-game-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-order-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-seat-lock-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-ticket-service` | `cf0d84dea8f3c217c61f72d39112a722281adef2` | 일치 |
+| `dev-ticket-worker-service` | `5f3b2d0e007240bc02c8686f88fcbce23a97a003` | 일치 |
+| `dev-waiting-room-service` | `cb0c96e8eb291df20401487a5566a0aee6334a90` | 일치 |
+
+9개 repository는 약 45~90초 안에 도쿄로 복제됐습니다. 도쿄에서 원래 GitOps commit tag를 부여한 뒤 서울과 도쿄의 digest가 모두 같은지 확인했습니다. `dr-bootstrap-*`와 `dr-replication-test-*` 임시 tag는 양쪽 리전에서 모두 정리했습니다.
+
+이 검증으로 이후 새로 push되는 image의 자동 복제 경로와, DR 시 즉시 필요한 현재 배포 image의 가용성을 모두 확보했습니다.

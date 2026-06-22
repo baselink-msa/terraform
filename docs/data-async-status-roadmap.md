@@ -310,8 +310,8 @@ DR 리전 인프라 준비
 
 - 별도 DR compute Terraform state와 EKS/Valkey/SQS stack
 - AWS Backup scheduled Cross-region Copy 자동 생성 확인
-- ECR Cross-region Replication 배포와 신규 tag/digest 검증
-- 기존 GitOps 활성 image tag 9개 도쿄 bootstrap
+- ECR Cross-region Replication — 배포와 신규 tag/digest 검증 완료
+- 기존 GitOps 활성 image tag 9개 도쿄 bootstrap — 완료
 - S3 Cross-region Replication
 - Secrets 동기화
 - GitOps `overlays/dr-tokyo`
@@ -342,6 +342,15 @@ DR 리전 인프라 준비
 - Terraform plan `10 add / 0 change / 0 destroy` 확인
 - 기존 이미지는 소급 복제되지 않으므로 활성 tag bootstrap 절차를 별도 Runbook으로 정의
 - 다음 backend image push에서 서울/도쿄 tag와 digest 일치 검증 예정
+
+2026-06-23 ECR 복제 완료:
+
+- Terraform Apply Dev run `27963663005` 전체 성공
+- 도쿄 repository 9개와 서울 `dev-` replication rule 배포
+- ticket-service 임시 OCI multi-architecture tag 자동 복제 약 30초
+- 현재 GitOps 활성 image 9개를 약 45~90초 안에 bootstrap
+- 서비스별 서울·도쿄 image digest 9개 모두 일치
+- 검증용 `dr-replication-test-*`, `dr-bootstrap-*` tag 정리 완료
 
 ## 9. DB Connection Pool과 Autoscaling
 

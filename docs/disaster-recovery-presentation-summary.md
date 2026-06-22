@@ -196,7 +196,8 @@ Pilot Light 전략:
 - 평상시에는 NAT 비용이 없고 DR 선언 시에만 단일 NAT 활성화
 - RDS·Valkey·SQS·IRSA·ECR 설정 교체 목록 명시
 - 도쿄 ALB 검증 후 CloudFront API origin을 전환하고, 이상 시 서울 ALB로 되돌리는 승인 절차 정의
-- 서울 `dev-` ECR image를 도쿄로 복제하는 rule과 destination repository 9개 Terraform 구현
+- 서울 `dev-` ECR image를 도쿄로 복제하는 rule과 destination repository 9개 배포
+- 신규 image 자동 복제 약 30초, 현재 활성 image 9개 digest 일치 검증
 
 상세 절차는 `docs/tokyo-dr-compute-cutover-runbook.md`를 따릅니다.
 ECR 배포와 기존 image 이관 절차는 `docs/ecr-cross-region-replication-runbook.md`를 따릅니다.
