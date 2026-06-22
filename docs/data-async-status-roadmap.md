@@ -45,10 +45,10 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | SQS 비동기 처리 | 검증 완료 | 원본 큐, DLQ, 재시도, redrive, backlog/DLQ 알람 |
 | Valkey | 배포 | 2노드 Multi-AZ, automatic failover, 저장 암호화 |
 | AWS Backup | 검증 완료 | Daily snapshot 생성과 임시 RDS 복원 리허설 완료 |
-| DR | 일부 검증 완료 | AZ/논리 장애 대응 완료, 리전 DR은 설계 단계 |
+| DR | 일부 검증 완료 | 도쿄 백업·네트워크 Pilot Light와 RDS 복원 검증 완료, compute 전환은 남음 |
 | Connection Pool | 검증 완료 | Spring/Python/KEDA 전체 app budget 60 적용 |
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
-| 운영 모니터링 | 일부 검증 완료 | CloudWatch·Backup EventBridge→SNS→Amazon Q 전달 성공, Slack 화면 최종 확인 대기 |
+| 운영 모니터링 | 일부 검증 완료 | CloudWatch·Backup EventBridge→SNS→Amazon Q→Slack 전달 확인, Python pool 전용 알림은 담당자 작업 중 |
 | 발표/Runbook | 진행 중 | 구현 상태 동기화 완료, 감속 전용 Runbook과 최종 증거 캡처 필요 |
 | 개인 프로젝트 | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor E2E 및 실패 경로 검증 |
 
@@ -293,8 +293,8 @@ PITR은 기존 DB를 되감지 않습니다.
 
 ```text
 도쿄 데이터 Pilot Light 완료
-→ 도쿄 네트워크 Pilot Light Terraform 구현·배포 대기
-→ 도쿄 RDS 복원 리허설
+→ 도쿄 네트워크 Pilot Light Terraform 배포 완료
+→ 도쿄 RDS 복원·데이터 검증 완료
 → 최소 compute와 endpoint 전환 준비
 ```
 
@@ -308,13 +308,21 @@ DR 리전 인프라 준비
 
 남은 작업:
 
-- 도쿄 VPC/subnet/DB subnet group/security group 배포
 - DR 리전용 Terraform tfvars
-- AWS Backup scheduled Cross-region Copy 확인과 도쿄 복원 검증
+- AWS Backup scheduled Cross-region Copy 자동 생성 확인
 - ECR/S3 Cross-region Replication
 - Secrets 동기화
 - Route 53 또는 CloudFront failover
-- 리전 장애 복구 리허설
+- 최소 compute/backend와 endpoint 전환 리허설
+
+2026-06-22 도쿄 복원 검증:
+
+- cross-region Recovery Point에서 private RDS 복원 성공
+- RDS 복원 약 8분 40초, 데이터 검증까지 약 16분 32초
+- SSM 임시 EC2에서 SSL 접속, Flyway V1~V4와 5개 schema 및 핵심 row count 확인
+- Recovery Point 이후 적용된 V5가 없는 것으로 선택 시점 복원 확인
+- 임시 EC2, IAM 역할, 복원 RDS 정리 완료
+- 전체 서비스 RTO에는 EKS/Valkey/SQS/backend와 endpoint 전환 시간이 추가로 필요
 
 ## 9. DB Connection Pool과 Autoscaling
 

@@ -179,12 +179,7 @@ dev 비용 절감 원칙:
 
 상세 복구 절차는 `docs/aws-backup-restore-runbook.md`를 따릅니다.
 
-남은 검증:
-
-- RDS native PITR로 임의 시점 복원
-- 임시 backend deployment를 복원 DB endpoint에 연결
-- 핵심 조회 API와 쓰기 차단 상태 smoke test
-- 측정 RPO/RTO 기록
+서울 리전 PITR와 임시 backend smoke test는 완료했습니다. 도쿄 cross-region 복원 결과는 아래 절에 기록합니다.
 
 ## 10. Cross-Region DR 구현안
 
@@ -215,6 +210,16 @@ Terraform 구현 상태:
 - 도쿄 보존 종료 시각은 2026-07-06 04:00 KST로 14일 정책과 일치합니다.
 - KMS 자동 rotation은 활성화됐고 주기는 365일입니다.
 
+2026-06-22 실제 도쿄 restore 검증:
+
+- 도쿄 VPC, 2개 AZ subnet, DB subnet group, app/RDS security group을 배포했습니다.
+- recovery point에서 private·암호화 RDS를 복원했습니다.
+- restore job `23cd1509-a73a-4e8b-b143-f1f8390e8d23`은 약 8분 40초 만에 완료됐습니다.
+- SSM 임시 EC2에서 SSL로 접속해 Flyway, 5개 schema와 핵심 데이터를 확인했습니다.
+- 복원 요청부터 데이터 검증 완료까지 약 16분 32초가 걸렸습니다.
+- 임시 RDS, EC2와 IAM 리소스는 검증 후 삭제했습니다.
+- 첫 시도는 RDS restore metadata의 `DBName` 제약으로 실패했으며, 해당 항목을 제거해 재시도했습니다.
+
 이번 on-demand copy는 이미 04:00에 생성된 recovery point를 22:54에 수동 복사한 테스트입니다. 따라서 원본 생성 시각과 copy 시작 시각의 차이는 scheduled 정책의 RPO 측정값이 아닙니다. 리전 장애 목표 RPO는 daily scheduled copy 기준 최대 24시간이며, 이번에 측정한 값은 리전 간 copy 처리 시간입니다.
 
 cross-region copy 정책 예시:
@@ -233,7 +238,7 @@ cross-region copy 정책 예시:
 2. Backup/Restore 실패 알림 배포와 Slack 전달 검증
 3. RDS native PITR와 backend smoke test
 4. 도쿄 backup vault와 cross-region copy 배포 및 copy job 확인 — 완료
-5. 도쿄 recovery point 복원 리허설
+5. 도쿄 recovery point 복원 리허설 — 완료
 6. DR 인프라 Terraform plan과 endpoint 전환 Runbook
 
 ## 12. 발표 포인트
@@ -241,4 +246,5 @@ cross-region copy 정책 예시:
 - RDS 자체 PITR만 사용하는 것이 아니라 AWS Backup을 통해 중앙 백업 정책을 설계했습니다.
 - dev 환경에서는 RDS native PITR과 AWS Backup daily snapshot의 역할을 분리했고, 실제 복원 리허설로 recovery point가 사용 가능한지 검증했습니다.
 - RPO/RTO를 먼저 정의한 뒤 backup retention과 restore 절차를 결정했습니다.
-- 도쿄 KMS/vault와 scheduled copy를 코드화했으며, 다음 단계에서 실제 copy job과 도쿄 recovery point 복원을 검증합니다.
+- 도쿄 KMS/vault, Pilot Light 네트워크와 scheduled copy를 코드화하고 실제 copy 및 RDS 복원·데이터 검증까지 완료했습니다.
+- 측정한 약 16분 32초는 DB 복원과 데이터 검증 범위이며 전체 서비스 RTO에는 compute와 endpoint 전환이 추가됩니다.
