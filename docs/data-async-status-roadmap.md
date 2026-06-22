@@ -48,7 +48,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | DR | 일부 검증 완료 | AZ/논리 장애 대응 완료, 리전 DR은 설계 단계 |
 | Connection Pool | 검증 완료 | Spring/Python/KEDA 전체 app budget 60 적용 |
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
-| 운영 모니터링 | 일부 검증 완료 | 대시보드와 CloudWatch 알람 구성, AWS Backup 실패 EventBridge 구현·배포 대기 |
+| 운영 모니터링 | 일부 검증 완료 | Backup/Copy/Restore 실패 EventBridge 배포 완료, SNS 테스트 발행 성공 |
 | 발표/Runbook | 진행 중 | 구현 상태 동기화 완료, 감속 전용 Runbook과 최종 증거 캡처 필요 |
 | 개인 프로젝트 | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor E2E 및 실패 경로 검증 |
 
@@ -255,12 +255,20 @@ PITR은 기존 DB를 되감지 않습니다.
 
 ### 7.4 남은 작업
 
-- PITR 복구 리허설
-- 복원 후 endpoint 전환 훈련
 - 자동 데이터 검증 스크립트
 - 복구 리허설 정기 실행
 - Cross-region Copy
 - 복원 리소스 자동 정리 보호 장치
+
+2026-06-22 추가 검증:
+
+- 명시한 시점으로 RDS native PITR 복원 완료
+- 최신 복구 가능 시각 지연 약 3분 28초로 RPO 5분 목표 확인
+- DB 인프라 복구 시간 약 7분 21초 측정
+- Flyway V1~V5와 핵심 schema/table/row count 확인
+- PITR endpoint로 임시 `ticket-service` 기동
+- Actuator health `UP`과 읽기 API 성공
+- 임시 Pod와 RDS 삭제 완료
 
 ## 8. DR
 
@@ -631,8 +639,8 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 | 작업 | 이유 | 완료 조건 |
 | --- | --- | --- |
 | 현재 문서와 발표 요약 최신화 | 실제 구현과 발표 내용 불일치 방지 | Python pool, 자동 감속, 최신 검증 결과가 모든 요약 문서에 일치 |
-| Backup/Restore 실패 알림 | 백업 실패를 늦게 발견하면 실제 RPO가 목표보다 커짐 | 실패 이벤트가 기존 ops Slack 채널까지 전달 |
-| RDS PITR 및 복원 endpoint 검증 | snapshot 복원 외 논리 장애와 서비스 연결 전환 증거 필요 | 임의 시점 복원, DB 검증, 임시 backend smoke test 완료 |
+| Backup/Restore 실패 알림 | 백업 실패를 늦게 발견하면 실제 RPO가 목표보다 커짐 | EventBridge/SNS 배포 완료, 테스트 발행 성공, Slack 화면 확인만 남음 |
+| RDS PITR 및 복원 endpoint 검증 | snapshot 복원 외 논리 장애와 서비스 연결 전환 증거 필요 | 완료: 임의 시점 복원, DB 검증, 임시 backend smoke test |
 | Python pool/자동 감속 Alert Rule 검증 | 기능은 있지만 장애 통지 검증이 부족함 | Warning/Critical 테스트 알림이 Slack까지 전달 |
 | 자동 감속 장애 대응 Runbook | 평가 시 운영 대응 질문에 대비 | NORMAL~STOP, DB 조회 실패, 복구 절차가 명시됨 |
 | 핵심 부하 테스트 1회 | pool/KEDA/입장량 수치의 근거 확보 | 안정·경고 구간의 처리량, connection, latency 기록 |
