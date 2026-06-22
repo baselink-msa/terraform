@@ -135,9 +135,9 @@ env/dev/infra/
 - 2026-06-16부터 2026-06-22까지 daily backup job이 연속으로 `COMPLETED` 상태입니다.
 - 최신 2026-06-22 04:00 KST 작업은 04:28 KST에 완료됐습니다.
 - `baselink-dev-backup-vault`에 recovery point 8개가 존재합니다.
-- Backup/Copy/Restore 실패 EventBridge와 기존 ops SNS 연동은 Terraform 구현과 격리 plan 검증을 완료했으며 배포를 기다리고 있습니다.
+- Backup/Copy/Restore 실패 EventBridge와 기존 ops SNS 연동을 배포하고 Slack 전달까지 검증했습니다.
 - Vault Lock은 아직 적용하지 않았습니다.
-- cross-region copy job은 아직 없습니다.
+- 도쿄 cross-region copy는 Terraform 구현과 plan 검증을 완료했으며 배포를 기다리고 있습니다.
 
 ## 8. 비용 고려
 
@@ -192,11 +192,19 @@ DR 리전은 `ap-northeast-1` 도쿄로 정합니다.
 
 구현 범위:
 
-- DR 리전 backup vault를 생성합니다.
-- DR 리전 KMS key를 생성하거나 AWS Backup 기본 key 사용 여부를 명시합니다.
+- `aws.tokyo` provider alias로 도쿄 리소스를 분리합니다.
+- 고객 관리형 KMS key와 `baselink-dev-tokyo-backup-vault`를 생성합니다.
 - 서울 daily rule에 도쿄 vault 대상 `copy_action`을 추가합니다.
-- 복사본 보존 기간은 dev 기준 14일로 시작합니다.
+- 서울 recovery point는 7일, 도쿄 복사본은 14일 보존합니다.
 - Backup/Copy/Restore 실패 이벤트를 기존 ops SNS와 Slack으로 전달합니다.
+
+Terraform 구현 상태:
+
+- `modules/backup`에 선택적 `copy_destination_vault_arn`과 `copy_delete_after_days`를 추가했습니다.
+- 도쿄 KMS key는 rotation을 활성화하고 삭제 대기 기간을 30일로 설정했습니다.
+- 도쿄 vault와 KMS key ARN을 Terraform output으로 노출했습니다.
+- 격리 plan 결과는 리소스 3개 생성, 기존 backup plan 1개 제자리 수정, 삭제 0입니다.
+- 첫 자동 copy는 배포 이후 다음 daily backup부터 발생합니다.
 
 cross-region copy 정책 예시:
 
@@ -213,7 +221,7 @@ cross-region copy 정책 예시:
 1. 현재 구성과 문서 동기화
 2. Backup/Restore 실패 알림 배포와 Slack 전달 검증
 3. RDS native PITR와 backend smoke test
-4. 도쿄 backup vault와 cross-region copy
+4. 도쿄 backup vault와 cross-region copy 배포 및 copy job 확인
 5. 도쿄 recovery point 복원 리허설
 6. DR 인프라 Terraform plan과 endpoint 전환 Runbook
 
@@ -222,4 +230,4 @@ cross-region copy 정책 예시:
 - RDS 자체 PITR만 사용하는 것이 아니라 AWS Backup을 통해 중앙 백업 정책을 설계했습니다.
 - dev 환경에서는 RDS native PITR과 AWS Backup daily snapshot의 역할을 분리했고, 실제 복원 리허설로 recovery point가 사용 가능한지 검증했습니다.
 - RPO/RTO를 먼저 정의한 뒤 backup retention과 restore 절차를 결정했습니다.
-- 다음 단계에서는 도쿄 리전에 snapshot을 실제 복사하고 복원해 단일 리전 한계를 제거합니다.
+- 도쿄 KMS/vault와 scheduled copy를 코드화했으며, 다음 단계에서 실제 copy job과 도쿄 recovery point 복원을 검증합니다.

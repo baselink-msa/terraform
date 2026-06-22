@@ -409,3 +409,38 @@ RDS native PITR와 복원 endpoint 기반 임시 backend smoke test는 2026-06-2
 - PowerShell에서 `aws backup start-restore-job --metadata`에 인라인 JSON을 넘기면 따옴표가 깨질 수 있습니다.
 - Windows PowerShell에서는 복구 metadata를 임시 JSON 파일로 저장한 뒤 `--metadata file://<path>` 형식으로 전달하는 방식이 더 안정적입니다.
 - PowerShell의 `$Host`는 예약 변수이므로 DB endpoint 변수명으로는 `$dbHost` 같은 이름을 사용합니다.
+
+## 16. 도쿄 Cross-Region Copy 검증 절차
+
+Terraform 배포 후 서울의 다음 daily backup은 도쿄 `baselink-dev-tokyo-backup-vault`로 자동 복사됩니다.
+
+서울 copy job 확인:
+
+```powershell
+aws backup list-copy-jobs `
+  --region ap-northeast-2 `
+  --query "CopyJobs[].{State:State,Created:CreationDate,Completed:CompletionDate,Destination:DestinationBackupVaultArn,Resource:ResourceArn,Message:StatusMessage}"
+```
+
+도쿄 vault와 recovery point 확인:
+
+```powershell
+aws backup describe-backup-vault `
+  --region ap-northeast-1 `
+  --backup-vault-name baselink-dev-tokyo-backup-vault
+
+aws backup list-recovery-points-by-backup-vault `
+  --region ap-northeast-1 `
+  --backup-vault-name baselink-dev-tokyo-backup-vault `
+  --query "RecoveryPoints[].{Arn:RecoveryPointArn,Status:Status,Created:CreationDate,ResourceType:ResourceType,Encrypted:IsEncrypted}"
+```
+
+검증 기준:
+
+- copy job이 `COMPLETED` 상태입니다.
+- destination vault ARN의 리전이 `ap-northeast-1`입니다.
+- 도쿄 recovery point 보존 기간이 14일입니다.
+- recovery point가 도쿄 고객 관리형 KMS key로 보호됩니다.
+- 실패 시 `baselink-dev-copy-job-failure` EventBridge rule이 `aws-alerts` 채널로 알림을 보냅니다.
+
+첫 scheduled copy를 기다리지 않고 검증해야 한다면 서울 recovery point를 선택해 on-demand copy를 실행할 수 있습니다. 실제 복원 리허설은 도쿄 VPC, DB subnet group, security group을 준비한 뒤 별도 임시 RDS identifier로 수행합니다.

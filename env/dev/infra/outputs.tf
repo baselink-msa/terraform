@@ -93,6 +93,21 @@ output "rds_backup_plan_id" {
   value       = module.backup.backup_plan_id
 }
 
+output "rds_dr_backup_vault_name" {
+  description = "AWS Backup vault name storing RDS copies in the Tokyo DR Region."
+  value       = aws_backup_vault.tokyo.name
+}
+
+output "rds_dr_backup_vault_arn" {
+  description = "AWS Backup vault ARN storing RDS copies in the Tokyo DR Region."
+  value       = aws_backup_vault.tokyo.arn
+}
+
+output "rds_dr_backup_kms_key_arn" {
+  description = "KMS key ARN encrypting RDS backup copies in the Tokyo DR Region."
+  value       = aws_kms_key.tokyo_backup.arn
+}
+
 output "redis_primary_endpoint" {
   description = "Primary endpoint of the dev Redis replication group."
   value       = module.elasticache.primary_endpoint_address

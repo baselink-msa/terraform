@@ -56,6 +56,28 @@ variable "delete_after_days" {
   }
 }
 
+variable "copy_destination_vault_arn" {
+  description = "Optional destination backup vault ARN for cross-Region copy."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.copy_destination_vault_arn == null || can(regex("^arn:aws:backup:[a-z0-9-]+:[0-9]{12}:backup-vault:", var.copy_destination_vault_arn))
+    error_message = "copy_destination_vault_arn must be a valid AWS Backup vault ARN."
+  }
+}
+
+variable "copy_delete_after_days" {
+  description = "Number of days to retain copied recovery points in the destination vault."
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.copy_delete_after_days >= 1
+    error_message = "copy_delete_after_days must be at least 1."
+  }
+}
+
 variable "resource_arns" {
   description = "Resource ARNs protected by this backup plan."
   type        = list(string)
