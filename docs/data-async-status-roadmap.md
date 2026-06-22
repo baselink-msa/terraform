@@ -289,6 +289,15 @@ PITR은 기존 DB를 되감지 않습니다.
 
 목표 전략은 Pilot Light입니다.
 
+현재 단계:
+
+```text
+도쿄 데이터 Pilot Light 완료
+→ 도쿄 네트워크 Pilot Light Terraform 구현·배포 대기
+→ 도쿄 RDS 복원 리허설
+→ 최소 compute와 endpoint 전환 준비
+```
+
 ```text
 DR 리전 인프라 준비
 → Cross-region snapshot 복원
@@ -299,6 +308,7 @@ DR 리전 인프라 준비
 
 남은 작업:
 
+- 도쿄 VPC/subnet/DB subnet group/security group 배포
 - DR 리전용 Terraform tfvars
 - AWS Backup scheduled Cross-region Copy 확인과 도쿄 복원 검증
 - ECR/S3 Cross-region Replication
