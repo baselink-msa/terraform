@@ -219,6 +219,8 @@ KEDA 변경안:
 | Python connection 증가 상한 없음 | 요청마다 `psycopg2.connect()` 수행 | bounded pool, timeout, rollback 적용 | 언어별 DB client 특성을 connection budget에 포함 |
 | Prometheus 서비스 구분 실패 | Kubernetes target의 `service` label과 애플리케이션 label 충돌 | `exported_service` label 사용 | metric label 충돌까지 실제 수집 단계에서 검증 |
 | AWS Backup restore 명령 실패 | PowerShell에서 metadata JSON quoting 손상 | 구조화된 metadata 전달 방식으로 변경 | 복구 Runbook은 실제 셸 환경까지 검증 |
+| Flyway V5 배포 후 신규 Pod 기동 실패 | 기존 예약 데이터에 중복 idempotency key 존재 | 예약 행은 보존하고 대표 key만 남긴 뒤 unique index 생성 | Migration은 기존 데이터 품질까지 고려해야 함 |
+| Event Writer E2E에서 S3 객체 미생성 | PowerShell이 SQS JSON 내부 따옴표를 제거 | 인자 배열을 보존해 JSON 전달, Lambda log로 입력 오류 확인 | 비동기 장애는 Producer·Queue·Consumer 구간을 나눠 진단 |
 
 ## 9. 발표 흐름 예시
 
@@ -230,12 +232,16 @@ KEDA 변경안:
 6. 단순 설계가 아니라 실제 임시 RDS 복구 리허설을 수행했다고 강조합니다.
 7. KEDA/Hikari를 RDS connection budget 안에서 설계해 장애를 예방했다고 설명합니다.
 8. RDS 압력에 따라 대기열 입장량이 자동 감속되는 결과를 보여줍니다.
-9. 개인 고도화에서는 Transactional Outbox와 예매 이벤트 파이프라인으로 데이터 신뢰성을 확장한다고 설명합니다.
+9. 개인 고도화에서는 Transactional Outbox부터 S3/Athena 분석과 안전 입장량 보고서까지의 E2E 결과를 설명합니다.
 10. 리전 장애는 Pilot Light 전략으로 확장 가능하다고 마무리합니다.
 
 ## 10. 발표용 한 문장 요약
 
 > Baselink의 데이터 계층은 RDS Multi-AZ, Valkey failover, SQS DLQ로 장애를 흡수하고 PITR과 AWS Backup으로 복구 지점을 확보했습니다. 여기에 DB connection budget과 대기열 자동 감속을 적용하고 실제 복원·감속·connection 검증까지 수행해, 장애 예방과 복구 가능성을 함께 확인했습니다.
+
+개인 프로젝트 한 문장:
+
+> 예매와 대기열 이벤트를 Transactional Outbox부터 S3/Athena까지 신뢰성 있게 전달하고, 실제 처리량을 바탕으로 운영자가 검토할 안전 입장량과 계산 근거를 생성했습니다.
 
 ## 11. 향후 개선 계획
 
@@ -249,7 +255,11 @@ KEDA 변경안:
 | Python DB pool Alert Rule | pool 고갈과 timeout 알림 | 진행 중 |
 | RDS connection 기반 대기열 자동 감속 | DB 위험 구간에서 신규 입장량 자동 조절 | 단계별 통합 검증 완료 |
 | 자동 감속 장애 대응 Runbook | STOP/fallback/복구 운영 절차 | 진행 예정 |
-| Ticket Event Transactional Outbox | DB commit과 이벤트 발행 사이 유실 구간 제거 | Publisher/SQS 구현 완료, 배포 검증 예정 |
+| Ticket Event Transactional Outbox | DB commit과 이벤트 발행 사이 유실 구간 제거 | 배포 및 Flyway/Publisher 검증 완료 |
+| Event Writer와 S3 적재 | 이벤트를 중복에 안전한 분석 데이터로 보존 | SQS→Lambda→S3 E2E 검증 완료 |
+| Glue/Athena 이벤트 분석 | 유입·대기시간·예약 전환율 계산 | Partition Projection과 핵심 query 검증 완료 |
+| Capacity Advisor | 처리량 근거가 있는 입장 정책 추천 | JSON/Markdown 보고서와 합성 표본 검증 완료 |
+| 실제 부하 테스트 기반 Advisor 재계산 | 합성 수치 대신 운영 가능한 근거 확보 | 진행 예정 |
 | RDS connection alarm threshold 재조정 | 현재 RDS `max_connections`에 맞는 조기 경보 | 완료 |
 | AWS Backup cross-region copy | 서울 리전 장애 대비 | 중 |
 | Valkey snapshot 정책 검토 | 캐시/대기열 장애 복구 선택지 확대 | 중 |
