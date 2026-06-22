@@ -4,6 +4,7 @@ resource "aws_sqs_queue" "this" {
   max_message_size          = var.max_message_size
   message_retention_seconds = var.message_retention_seconds
   receive_wait_time_seconds = var.receive_wait_time_seconds
+  sqs_managed_sse_enabled   = var.sqs_managed_sse_enabled
   redrive_policy = var.create_dead_letter_queue ? jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dead_letter[0].arn
     maxReceiveCount     = var.max_receive_count
@@ -17,6 +18,7 @@ resource "aws_sqs_queue" "dead_letter" {
 
   name                      = var.dead_letter_queue_name != null ? var.dead_letter_queue_name : "${var.queue_name}-dlq"
   message_retention_seconds = var.dead_letter_queue_message_retention_seconds
+  sqs_managed_sse_enabled   = var.sqs_managed_sse_enabled
 
   tags = merge(var.tags, {
     Purpose = "dead-letter-queue"

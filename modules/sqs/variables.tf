@@ -26,6 +26,12 @@ variable "receive_wait_time_seconds" {
   default = 0
 }
 
+variable "sqs_managed_sse_enabled" {
+  description = "Whether to enable Amazon SQS managed server-side encryption."
+  type        = bool
+  default     = true
+}
+
 variable "create_dead_letter_queue" {
   description = "Whether to create and connect a dead-letter queue."
   type        = bool
