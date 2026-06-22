@@ -5,16 +5,22 @@ locals {
     backup = {
       detail_type = "Backup Job State Change"
       detail_key  = "state"
+      job_id_path = "$.detail.backupJobId"
+      job_label   = "backup"
       values      = ["FAILED", "ABORTED", "EXPIRED"]
     }
     copy = {
       detail_type = "Copy Job State Change"
       detail_key  = "state"
+      job_id_path = "$.detail.copyJobId"
+      job_label   = "cross-region copy"
       values      = ["FAILED"]
     }
     restore = {
       detail_type = "Restore Job State Change"
       detail_key  = "status"
+      job_id_path = "$.detail.restoreJobId"
+      job_label   = "restore"
       values      = ["FAILED"]
     }
   } : {}
@@ -40,10 +46,46 @@ resource "aws_cloudwatch_event_rule" "backup_failure" {
 }
 
 resource "aws_cloudwatch_event_target" "backup_failure_sns" {
-  for_each = aws_cloudwatch_event_rule.backup_failure
+  for_each = local.backup_failure_event_rules
 
-  rule = each.value.name
+  rule = aws_cloudwatch_event_rule.backup_failure[each.key].name
   arn  = aws_sns_topic.ops_alerts[0].arn
+
+  input_transformer {
+    input_paths = {
+      event_id   = "$.id"
+      event_time = "$.time"
+      job_id     = each.value.job_id_path
+      region     = "$.region"
+      status     = "$.detail.${each.value.detail_key}"
+    }
+
+    input_template = jsonencode({
+      version = "1.0"
+      source  = "custom"
+      id      = "<event_id>"
+      content = {
+        textType    = "client-markdown"
+        title       = ":rotating_light: AWS Backup ${each.value.job_label} job alert"
+        description = "The *${each.value.job_label}* job entered *<status>* state in *<region>*.\nJob ID: `<job_id>`\nEvent time: `<event_time>`"
+        nextSteps = [
+          "Open the AWS Backup job and review its status message.",
+          "Follow the AWS Backup section in the operations alarm runbook.",
+          "Confirm that the latest valid recovery point still meets the target RPO.",
+        ]
+        keywords = ["AWS Backup", each.value.job_label, "Failure"]
+      }
+      metadata = {
+        threadId = "baselink-backup-${each.key}-alerts"
+        summary  = "AWS Backup ${each.value.job_label} job requires attention"
+        additionalContext = {
+          environment = "dev"
+          jobType     = each.value.job_label
+        }
+        enableCustomActions = false
+      }
+    })
+  }
 }
 
 data "aws_iam_policy_document" "ops_alerts_topic" {

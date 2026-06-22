@@ -470,7 +470,16 @@ aws events describe-rule --name baselink-dev-restore-job-failure
 
 AWS Backup은 EventBridge 이벤트를 best effort 방식으로 전달하므로, 정기 점검에서는 최근 backup job 완료 여부와 recovery point 개수도 함께 확인합니다.
 
+Slack 전달 형식:
+
+- Amazon Q Developer는 SNS에 발행된 임의 문자열을 모두 Slack으로 전달하지 않습니다.
+- Backup/Copy/Restore EventBridge target은 Input Transformer로 이벤트를 Amazon Q custom notification schema로 변환합니다.
+- 변환 결과에는 작업 유형, 상태, AWS 리전, job ID, 이벤트 시각, 후속 조치가 포함됩니다.
+- 일반 `aws sns publish --message "plain text"` 테스트가 Slack에 나타나지 않는 것은 SNS 연결 실패를 의미하지 않습니다.
+
 ## 9. Slack 알림 테스트
+
+### 기존 CloudWatch Alarm 경로
 
 운영 알람을 실제 장애 없이 테스트하려면 CloudWatch Alarm 상태를 수동으로 바꿀 수 있습니다.
 
@@ -505,6 +514,42 @@ aws cloudwatch describe-alarms `
   --alarm-names baselink-dev-ticket-confirm-queue-backlog `
   --query "MetricAlarms[0].{Name:AlarmName,State:StateValue,Reason:StateReason}"
 ```
+
+### Amazon Q custom notification 경로
+
+일반 문자열 대신 Amazon Q 공식 schema를 사용합니다.
+
+```powershell
+$message = @{
+  version = "1.0"
+  source  = "custom"
+  id      = "backup-alert-path-test"
+  content = @{
+    textType   = "client-markdown"
+    title      = ":white_check_mark: AWS Backup alert path test"
+    description = "TEST ONLY: custom notification delivery to the existing aws-alerts channel."
+    nextSteps  = @("Confirm this message is visible in Slack", "No backup job has failed")
+    keywords   = @("AWS Backup", "Test", "DR")
+  }
+  metadata = @{
+    threadId = "baselink-backup-alerts"
+    summary  = "AWS Backup alert path test"
+    enableCustomActions = $false
+  }
+} | ConvertTo-Json -Depth 10 -Compress
+
+aws sns publish `
+  --topic-arn arn:aws:sns:ap-northeast-2:740831361032:baselink-dev-ops-alerts `
+  --subject "AWS Backup custom notification test" `
+  --message $message
+```
+
+채널에 나타나야 하는 메시지:
+
+- DLQ alarm `ALARM`과 `OK`
+- `AWS Backup alert path test` custom notification
+
+이 테스트는 Slack 표시 형식과 SNS 구독을 확인합니다. 실제 EventBridge rule 자체는 다음 Backup/Copy/Restore 실패 이벤트가 발생할 때 같은 custom schema로 전달됩니다.
 
 ## 10. 발표용 요약
 
