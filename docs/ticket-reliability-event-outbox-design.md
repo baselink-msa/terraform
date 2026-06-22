@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-이 문서는 개인 프로젝트 `Ticket Reliability Data Platform`의 1주 MVP 설계를 정의합니다.
+이 문서는 개인 프로젝트 `Ticket Reliability Data Platform & Capacity Advisor`의 MVP 설계와 구현·검증 결과를 정의합니다.
 
 목표:
 
@@ -10,7 +10,7 @@
 - 메시지가 중복 전달되어도 결과가 중복되지 않게 합니다.
 - 대기열 이벤트가 RDS 보호 기능을 약화시키지 않게 합니다.
 - 이벤트를 S3에 분석 가능한 형태로 적재합니다.
-- Athena 결과와 DB 여유율을 이용해 안전 입장량을 계산합니다.
+- Athena의 과거 처리량으로 정책 추천값을 계산하고 현재 DB 압력은 별도 운영 참고값으로 제공합니다.
 - AI는 계산을 대신하지 않고 결과의 근거를 설명합니다.
 
 범위에서 제외:
@@ -20,9 +20,35 @@
 - AI의 무승인 인프라 변경
 - 복잡한 미래 트래픽 ML 예측
 
-## 2. 현재 문제
+## 1.1 현재 상태 요약
 
-현재 예약 생성 흐름:
+2026년 6월 22일 기준 MVP의 핵심 구현과 E2E 검증을 완료했습니다.
+
+```text
+예약 transaction + Outbox
+→ Publisher
+→ SQS/DLQ
+→ Event Writer Lambda
+→ S3 partition
+→ Glue/Athena
+→ Capacity Advisor
+→ JSON/Markdown 근거 보고서
+```
+
+한 문장 요약:
+
+> 예매와 대기열 이벤트를 유실과 중복에 안전하게 수집하고 실제 처리량을 분석해, 운영자가 검토할 수 있는 안전 입장량과 근거를 제공하는 프로젝트입니다.
+
+남은 핵심 작업:
+
+- 합성 데이터가 아닌 실제 부하 테스트 이벤트로 Advisor 재계산
+- 안정·경고·STOP 시나리오 결과 캡처
+- 발표 데모와 예상 질문 자료 정리
+- 시간이 남으면 승인형 DLQ redrive 또는 Bedrock 자연어 요약
+
+## 2. 개선 전 문제
+
+개선 전 예약 생성 흐름:
 
 ```text
 예약 PENDING 저장 및 commit
@@ -39,7 +65,7 @@ DB commit 성공
 → 예약은 존재하지만 worker가 이벤트를 받지 못함
 ```
 
-현재 idempotency key는 중복 예약을 줄이지만 DB commit과 메시지 발행 사이의 원자성은 보장하지 않습니다.
+기존 idempotency key는 중복 예약을 줄이지만 DB commit과 메시지 발행 사이의 원자성은 보장하지 못했습니다.
 
 Transactional Outbox는 예약과 발행할 이벤트를 같은 DB transaction에 저장하여 이 구간을 제거합니다.
 
