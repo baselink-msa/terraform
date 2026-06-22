@@ -1,6 +1,7 @@
 locals {
-  name_prefix  = "${var.project_name}-${var.environment}"
-  cluster_name = var.eks_cluster_name != "" ? var.eks_cluster_name : local.name_prefix
+  name_prefix     = "${var.project_name}-${var.environment}"
+  cluster_name    = var.eks_cluster_name != "" ? var.eks_cluster_name : local.name_prefix
+  dr_cluster_name = "${local.name_prefix}-tokyo"
 
   common_tags = {
     Project     = var.project_name

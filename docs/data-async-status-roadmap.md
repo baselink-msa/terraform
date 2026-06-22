@@ -308,11 +308,12 @@ DR 리전 인프라 준비
 
 남은 작업:
 
-- DR 리전용 Terraform tfvars
+- 별도 DR compute Terraform state와 EKS/Valkey/SQS stack
 - AWS Backup scheduled Cross-region Copy 자동 생성 확인
 - ECR/S3 Cross-region Replication
 - Secrets 동기화
-- Route 53 또는 CloudFront failover
+- GitOps `overlays/dr-tokyo`
+- CloudFront API origin 실제 전환
 - 최소 compute/backend와 endpoint 전환 리허설
 
 2026-06-22 도쿄 복원 검증:
@@ -323,6 +324,14 @@ DR 리전 인프라 준비
 - Recovery Point 이후 적용된 V5가 없는 것으로 선택 시점 복원 확인
 - 임시 EC2, IAM 역할, 복원 RDS 정리 완료
 - 전체 서비스 RTO에는 EKS/Valkey/SQS/backend와 endpoint 전환 시간이 추가로 필요
+
+2026-06-23 Compute 활성화 준비:
+
+- 도쿄 EKS 예약 이름을 `baselink-dev-tokyo`로 고정
+- public/private app subnet에 EKS discovery tag를 추가하는 Terraform plan 검증
+- 평상시 NAT 비활성, DR 선언 시 단일 NAT만 활성화하는 입력 추가
+- RDS·Valkey·SQS·IRSA·ECR·ALB·CloudFront 전환 순서를 Runbook으로 문서화
+- 전체 plan에서 발견된 무관한 Lambda/Athena drift는 적용 대상에서 제외
 
 ## 9. DB Connection Pool과 Autoscaling
 
@@ -617,6 +626,7 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 - `docs/disaster-recovery-presentation-summary.md`
 - `docs/aws-backup-design.md`
 - `docs/aws-backup-restore-runbook.md`
+- `docs/tokyo-dr-compute-cutover-runbook.md`
 - `docs/ops-alarm-runbook.md`
 - `modules/rds/README.md`
 - `modules/rds/RUNBOOK.md`

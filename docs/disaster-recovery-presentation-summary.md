@@ -190,6 +190,15 @@ Pilot Light 전략:
 
 현재는 데이터와 네트워크 Pilot Light 및 RDS 복원 경로까지 검증했습니다. 전체 서비스 RTO 2~4시간을 증명하려면 EKS, Valkey, SQS, backend 재구성과 endpoint 전환 리허설이 추가로 필요합니다.
 
+다음 복구 단계도 즉흥적으로 수행하지 않도록 준비했습니다.
+
+- 도쿄 EKS 이름과 subnet discovery tag를 사전 고정
+- 평상시에는 NAT 비용이 없고 DR 선언 시에만 단일 NAT 활성화
+- RDS·Valkey·SQS·IRSA·ECR 설정 교체 목록 명시
+- 도쿄 ALB 검증 후 CloudFront API origin을 전환하고, 이상 시 서울 ALB로 되돌리는 승인 절차 정의
+
+상세 절차는 `docs/tokyo-dr-compute-cutover-runbook.md`를 따릅니다.
+
 ## 7. DB connection budget 기반 안정성 설계
 
 KEDA와 Karpenter는 트래픽이 몰릴 때 pod와 node를 늘려줍니다. 하지만 RDS connection 수는 무한하지 않기 때문에, pod가 너무 많이 늘어나면 오히려 DB connection 고갈이 먼저 발생할 수 있습니다.
