@@ -317,20 +317,30 @@ Restore job ID:
 
 ## 13. 현재 검증 상태
 
-2026-06-16 기준으로 다음은 검증 완료되었습니다.
+2026-06-22 기준으로 다음은 검증 완료되었습니다.
 
 - AWS Backup vault 생성 확인
 - AWS Backup plan 생성 확인
 - AWS Backup selection 생성 확인
 - 자동 daily backup recovery point 생성 확인
 - on-demand backup job 생성 및 `COMPLETED` 확인
-
-아직 남은 검증:
-
 - recovery point에서 새 RDS 인스턴스로 restore
 - 복원 DB 접속 확인
 - schema와 데이터 검증
 - 복원 DB 삭제 정리
+
+운영 상태 확인:
+
+- 2026-06-16부터 2026-06-22까지 daily backup job 연속 완료
+- 최신 2026-06-22 04:00 KST 작업은 04:28 KST 완료
+- `baselink-dev-backup-vault` recovery point 8개 확인
+
+아직 남은 검증:
+
+- RDS native PITR 임의 시점 복원
+- 복원 DB endpoint를 사용하는 임시 backend smoke test
+- 도쿄 리전 cross-region recovery point 복사와 복원
+- Backup/Restore 실패 알림의 Slack 전달
 
 ## 14. 관련 문서
 

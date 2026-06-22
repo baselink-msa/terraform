@@ -7,6 +7,7 @@
 - RDS PostgreSQL: 예매 데이터, 경기/좌석/주문 데이터 저장소
 - Valkey ElastiCache: 대기열, 좌석 선점, 짧은 TTL 캐시
 - SQS: 예매 확정 비동기 처리 큐와 DLQ
+- AWS Backup: RDS backup, cross-region copy, restore job
 - SNS + Amazon Q Developer: CloudWatch Alarm을 Slack 채널로 전달
 
 ## 1. 알림 흐름
@@ -14,6 +15,8 @@
 ```text
 RDS / Valkey / SQS metric
   -> CloudWatch Alarm
+AWS Backup job state
+  -> EventBridge Rule
   -> SNS Topic: baselink-dev-ops-alerts
   -> Amazon Q Developer Slack channel configuration
   -> 팀 Slack 알림 채널
@@ -58,6 +61,14 @@ Slack에는 장애 알림과 복구 알림이 모두 도착합니다.
 | --- | --- | --- |
 | `baselink-dev-ticket-confirm-queue-backlog` | 원본 큐 visible messages >= 10, 5분 x 2회 | 워커 처리 속도가 유입량을 따라가지 못함 |
 | `baselink-dev-ticket-confirm-dlq-messages-visible` | DLQ visible messages >= 1, 1분 x 1회 | 메시지가 반복 실패 후 DLQ로 격리됨 |
+
+### AWS Backup
+
+| EventBridge rule | 감지 상태 | 의미 |
+| --- | --- | --- |
+| `baselink-dev-backup-job-failure` | `FAILED`, `ABORTED`, `EXPIRED` | 정기 또는 수동 백업이 복구 지점을 만들지 못함 |
+| `baselink-dev-copy-job-failure` | `FAILED` | 도쿄 리전 cross-region copy 실패 |
+| `baselink-dev-restore-job-failure` | `FAILED` | 복구 리허설 또는 실제 복원 실패 |
 
 ## 3. 공통 1차 대응
 
@@ -421,7 +432,45 @@ AI 분석 요청 템플릿:
 
 이 구조는 AI가 조치 후보를 빠르게 정리하도록 돕되, 데이터 정합성에 영향을 주는 작업은 사람이 승인하도록 하기 위한 운영 방식입니다.
 
-## 8. Slack 알림 테스트
+## 8. AWS Backup 실패 이벤트 대응
+
+AWS Backup 이벤트는 CloudWatch metric alarm이 아니라 EventBridge 상태 변경 이벤트로 수집합니다.
+
+1차 확인:
+
+```powershell
+aws backup list-backup-jobs `
+  --by-state FAILED `
+  --query "BackupJobs[].{JobId:BackupJobId,Resource:ResourceArn,Message:StatusMessage,Created:CreationDate}"
+
+aws backup list-copy-jobs `
+  --by-state FAILED `
+  --query "CopyJobs[].{JobId:CopyJobId,Resource:ResourceArn,Message:StatusMessage,Created:CreationDate}"
+
+aws backup list-restore-jobs `
+  --query "RestoreJobs[?Status=='FAILED'].{JobId:RestoreJobId,Resource:CreatedResourceArn,Message:StatusMessage,Created:CreationDate}"
+```
+
+대응 원칙:
+
+- `FAILED`: IAM 권한, vault/KMS key, 대상 리소스 상태, `statusMessage`를 확인하고 원인을 수정합니다.
+- `ABORTED`: 누가 어떤 이유로 중단했는지 CloudTrail과 작업 이력을 확인합니다.
+- `EXPIRED`: start window 안에 작업이 시작되지 못한 이유와 동일 리소스의 선행 작업을 확인합니다.
+- copy 실패 시 서울 recovery point는 유지되지만 리전 DR RPO가 증가하므로 우선순위를 높여 재복사합니다.
+- restore 실패 시 기존 운영 DB를 변경하지 말고 새 identifier로 복원 작업을 다시 수행합니다.
+
+EventBridge 패턴 확인:
+
+```powershell
+aws events describe-rule --name baselink-dev-backup-job-failure
+aws events list-targets-by-rule --rule baselink-dev-backup-job-failure
+aws events describe-rule --name baselink-dev-copy-job-failure
+aws events describe-rule --name baselink-dev-restore-job-failure
+```
+
+AWS Backup은 EventBridge 이벤트를 best effort 방식으로 전달하므로, 정기 점검에서는 최근 backup job 완료 여부와 recovery point 개수도 함께 확인합니다.
+
+## 9. Slack 알림 테스트
 
 운영 알람을 실제 장애 없이 테스트하려면 CloudWatch Alarm 상태를 수동으로 바꿀 수 있습니다.
 
@@ -457,17 +506,18 @@ aws cloudwatch describe-alarms `
   --query "MetricAlarms[0].{Name:AlarmName,State:StateValue,Reason:StateReason}"
 ```
 
-## 9. 발표용 요약
+## 10. 발표용 요약
 
 이 프로젝트의 Data & Async Processing 운영 안정성은 다음 흐름으로 설명할 수 있습니다.
 
 - RDS는 Multi-AZ, 자동 백업, PITR, CloudWatch Alarm으로 데이터 저장소의 가용성과 복구 가능성을 확보했습니다.
 - Valkey는 primary/replica Multi-AZ 구성과 CPU/메모리/eviction/복제 지연 알람으로 대기열과 좌석 선점 계층의 이상 징후를 감지합니다.
 - SQS는 원본 큐 backlog 알람으로 처리 지연을 조기에 감지하고, DLQ 알람과 redrive 절차로 최종 실패 메시지를 안전하게 복구할 수 있게 했습니다.
+- AWS Backup의 backup/copy/restore 실패는 EventBridge를 통해 기존 운영 Slack 채널로 전달합니다.
 - 모든 주요 알람은 SNS와 Amazon Q Developer를 통해 Slack으로 전달되어 팀이 장애와 복구 상태를 빠르게 공유할 수 있습니다.
 - 진단 스크립트와 AI 분석 템플릿을 함께 준비해, 운영자가 metric과 로그를 빠르게 수집하고 안전한 조치 후보를 판단할 수 있게 했습니다.
 
-## 10. 관련 문서
+## 11. 관련 문서
 
 - `modules/rds/RUNBOOK.md`: RDS PITR 복구 절차
 - `modules/rds/README.md`: RDS 백업/PITR 설정 설명
@@ -475,4 +525,5 @@ aws cloudwatch describe-alarms `
 - `env/dev/infra/rds_alarms.tf`: RDS CloudWatch Alarm Terraform 코드
 - `env/dev/infra/valkey_alarms.tf`: Valkey CloudWatch Alarm Terraform 코드
 - `modules/sqs/main.tf`: SQS DLQ 및 원본 큐 backlog 알람 Terraform 코드
+- `env/dev/infra/backup_alarms.tf`: AWS Backup 실패 EventBridge와 SNS 정책
 - `scripts/diagnose-data-alarm.ps1`: RDS, Valkey, SQS, EKS 상태 수집 스크립트
