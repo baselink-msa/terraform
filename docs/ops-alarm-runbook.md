@@ -520,7 +520,9 @@ aws cloudwatch describe-alarms `
 일반 문자열 대신 Amazon Q 공식 schema를 사용합니다.
 
 ```powershell
-$message = @{
+$messageFile = Join-Path $env:TEMP "amazon-q-backup-alert-test.json"
+
+@{
   version = "1.0"
   source  = "custom"
   id      = "backup-alert-path-test"
@@ -536,12 +538,14 @@ $message = @{
     summary  = "AWS Backup alert path test"
     enableCustomActions = $false
   }
-} | ConvertTo-Json -Depth 10 -Compress
+} | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $messageFile
 
 aws sns publish `
   --topic-arn arn:aws:sns:ap-northeast-2:740831361032:baselink-dev-ops-alerts `
   --subject "AWS Backup custom notification test" `
-  --message $message
+  --message "file://$messageFile"
+
+Remove-Item -LiteralPath $messageFile
 ```
 
 채널에 나타나야 하는 메시지:
@@ -550,6 +554,13 @@ aws sns publish `
 - `AWS Backup alert path test` custom notification
 
 이 테스트는 Slack 표시 형식과 SNS 구독을 확인합니다. 실제 EventBridge rule 자체는 다음 Backup/Copy/Restore 실패 이벤트가 발생할 때 같은 custom schema로 전달됩니다.
+
+주의:
+
+- PowerShell에서 JSON 문자열을 `--message $message`로 직접 전달하면 따옴표가 제거될 수 있습니다.
+- Amazon Q 오류 로그에 `{version:1.0,...}`처럼 key의 큰따옴표가 없는 payload가 보이면 JSON 전달 방식 문제입니다.
+- JSON 파일을 만들고 `--message file://<path>`로 전달하면 원형을 보존할 수 있습니다.
+- SNS topic policy에는 EventBridge뿐 아니라 `cloudwatch.amazonaws.com`의 `SNS:Publish` 권한도 유지해야 기존 DLQ/RDS/Valkey/WAF alarm이 계속 전달됩니다.
 
 ## 10. 발표용 요약
 
