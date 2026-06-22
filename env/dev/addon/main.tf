@@ -238,60 +238,6 @@ resource "aws_iam_role_policy" "yace_tagging" {
   })
 }
 
-#==============================================================================
-# Robusta HolmesGPT — IRSA Role (AWS Bedrock 접근)
-# monitoring 네임스페이스의 robusta-runner SA가 Bedrock를 호출할 수 있도록
-#==============================================================================
-data "aws_iam_policy_document" "robusta_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [data.terraform_remote_state.infra.outputs.eks_oidc_provider_arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.oidc_url_bare}:sub"
-      values   = ["system:serviceaccount:monitoring:robusta-runner"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${local.oidc_url_bare}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "robusta_bedrock" {
-  name               = "baselink-dev-robusta-bedrock"
-  assume_role_policy = data.aws_iam_policy_document.robusta_assume.json
-  tags               = local.common_tags
-}
-
-resource "aws_iam_role_policy" "robusta_bedrock" {
-  name = "robusta-bedrock-invoke"
-  role = aws_iam_role.robusta_bedrock.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "BedrockInvoke"
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
-        ]
-        Resource = "arn:aws:bedrock:ap-northeast-2::foundation-model/*"
-      }
-    ]
-  })
-}
-
 resource "kubectl_manifest" "baselink_application" {
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
