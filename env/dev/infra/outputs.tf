@@ -113,6 +113,11 @@ output "dr_vpc_id" {
   value       = module.tokyo_vpc.vpc_id
 }
 
+output "dr_eks_cluster_name" {
+  description = "Reserved EKS cluster name used by Tokyo subnet discovery tags and the future DR compute stack."
+  value       = local.dr_cluster_name
+}
+
 output "dr_public_subnet_ids" {
   description = "Public subnet IDs reserved for temporary Tokyo validation resources."
   value       = module.tokyo_vpc.public_subnet_ids

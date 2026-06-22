@@ -61,6 +61,18 @@ variable "dr_private_data_subnet_cidrs" {
   default     = ["10.100.40.0/24", "10.100.50.0/24"]
 }
 
+variable "dr_enable_nat_gateway" {
+  description = "Whether to activate a NAT gateway for Tokyo private subnets during a DR recovery. Keep false for Pilot Light standby and set true only while compute is active."
+  type        = bool
+  default     = false
+}
+
+variable "dr_single_nat_gateway" {
+  description = "Whether Tokyo DR uses one shared NAT gateway. A single NAT limits recovery cost but is not AZ-redundant."
+  type        = bool
+  default     = true
+}
+
 variable "project_name" {
   description = "Project name used for resource naming and tags."
   type        = string

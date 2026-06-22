@@ -12,9 +12,9 @@ module "tokyo_vpc" {
   public_subnet_cidrs       = var.dr_public_subnet_cidrs
   private_app_subnet_cidrs  = var.dr_private_app_subnet_cidrs
   private_data_subnet_cidrs = var.dr_private_data_subnet_cidrs
-  enable_nat_gateway        = false
-  single_nat_gateway        = true
-  eks_cluster_name          = ""
+  enable_nat_gateway        = var.dr_enable_nat_gateway
+  single_nat_gateway        = var.dr_single_nat_gateway
+  eks_cluster_name          = local.dr_cluster_name
 }
 
 resource "aws_security_group" "tokyo_app" {
