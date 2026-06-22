@@ -310,7 +310,9 @@ DR 리전 인프라 준비
 
 - 별도 DR compute Terraform state와 EKS/Valkey/SQS stack
 - AWS Backup scheduled Cross-region Copy 자동 생성 확인
-- ECR/S3 Cross-region Replication
+- ECR Cross-region Replication 배포와 신규 tag/digest 검증
+- 기존 GitOps 활성 image tag 9개 도쿄 bootstrap
+- S3 Cross-region Replication
 - Secrets 동기화
 - GitOps `overlays/dr-tokyo`
 - CloudFront API origin 실제 전환
@@ -332,6 +334,14 @@ DR 리전 인프라 준비
 - 평상시 NAT 비활성, DR 선언 시 단일 NAT만 활성화하는 입력 추가
 - RDS·Valkey·SQS·IRSA·ECR·ALB·CloudFront 전환 순서를 Runbook으로 문서화
 - 전체 plan에서 발견된 무관한 Lambda/Athena drift는 적용 대상에서 제외
+
+2026-06-23 ECR 복제 준비:
+
+- 서울 `dev-` repository만 선택하는 도쿄 Cross-Region Replication rule 구현
+- 도쿄 repository 9개를 Terraform으로 사전 생성해 scan/tag 설정 통일
+- Terraform plan `10 add / 0 change / 0 destroy` 확인
+- 기존 이미지는 소급 복제되지 않으므로 활성 tag bootstrap 절차를 별도 Runbook으로 정의
+- 다음 backend image push에서 서울/도쿄 tag와 digest 일치 검증 예정
 
 ## 9. DB Connection Pool과 Autoscaling
 
@@ -627,6 +637,7 @@ Monitoring: 수집, 시각화, Alert Rule, 알림 채널
 - `docs/aws-backup-design.md`
 - `docs/aws-backup-restore-runbook.md`
 - `docs/tokyo-dr-compute-cutover-runbook.md`
+- `docs/ecr-cross-region-replication-runbook.md`
 - `docs/ops-alarm-runbook.md`
 - `modules/rds/README.md`
 - `modules/rds/RUNBOOK.md`
