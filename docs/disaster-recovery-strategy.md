@@ -404,7 +404,7 @@ Pilot Light 구성:
 - DR 리전 VPC/Subnet Terraform 구현·배포 완료
 - DR EKS 이름 `baselink-dev-tokyo`와 subnet discovery tag 고정
 - 평상시 비활성, DR 선언 시에만 단일 NAT를 생성하는 activation 입력 준비
-- DR 리전 ECR repository와 `dev-` prefix replication rule 구현·plan 완료
+- DR 리전 ECR repository와 `dev-` prefix replication rule 배포·검증 완료
 - RDS snapshot cross-region copy
 - frontend S3 replication 또는 배포 산출물 재배포 절차
 - Terraform DR tfvars 준비
@@ -453,8 +453,8 @@ Pilot Light 구성:
 - 도쿄 VPC, subnet, DB subnet group, security group — Terraform 배포 및 확인 완료
 - 도쿄 recovery point 복원과 데이터 검증 — 완료, RDS 약 8분 40초·검증까지 약 16분 32초
 - Compute 활성화와 endpoint 전환 Runbook — 작성 완료
-- ECR cross-region replication — Terraform 구현·plan 완료, 배포 후 신규 tag 검증 대기
-- 기존 GitOps 활성 image tag 9개 도쿄 bootstrap
+- ECR cross-region replication — 배포 및 신규 tag/digest 검증 완료
+- 기존 GitOps 활성 image tag 9개 도쿄 bootstrap — 완료
 - 별도 DR compute state와 EKS/Valkey/SQS 구현
 - GitOps `overlays/dr-tokyo` 구현
 
