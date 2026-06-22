@@ -256,7 +256,10 @@ data "aws_iam_policy_document" "robusta_assume" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_url_bare}:sub"
-      values   = ["system:serviceaccount:monitoring:robusta-stack-runner-service-account"]
+      values = [
+        "system:serviceaccount:monitoring:robusta-stack-runner-service-account",
+        "system:serviceaccount:monitoring:robusta-stack-holmes-service-account"
+      ]
     }
 
     condition {
