@@ -472,9 +472,7 @@ aws backup list-recovery-points-by-backup-vault `
 남은 검증:
 
 - 다음 daily backup에서 scheduled copy job 자동 생성 확인
-- 도쿄 네트워크와 DB subnet group Terraform 배포
-- 도쿄 recovery point에서 임시 RDS 복원
-- 복원 DB 데이터와 임시 backend smoke test
+- 도쿄 최소 compute/backend와 endpoint 전환 smoke test
 
 ## 17. 도쿄 Pilot Light 복원 네트워크
 
@@ -503,3 +501,50 @@ Terraform 준비 구성:
 - 도쿄 recovery point를 private RDS로 바로 복원할 수 있습니다.
 - 전체 EKS를 만들기 전에 임시 검증 인스턴스로 schema와 데이터를 확인할 수 있습니다.
 - 이후 EKS, Valkey, SQS를 동일한 VPC와 CIDR 정책 위에 확장할 수 있습니다.
+
+### 17.1 실제 도쿄 RDS 복원 결과 - 2026-06-22
+
+도쿄 Pilot Light 네트워크를 배포한 뒤 cross-region recovery point에서 private RDS를 실제로 복원했습니다.
+
+| 항목 | 결과 |
+| --- | --- |
+| Recovery Point | `awsbackup:copyjob-4413572b-ca09-44d7-8d7d-fa95a881b702` |
+| Restore Job ID | `23cd1509-a73a-4e8b-b143-f1f8390e8d23` |
+| 복원 DB | `baselink-dev-postgres-tokyo-restore-20260622` |
+| 시작 시각 | 2026-06-22 23:36:16 KST |
+| RDS 복원 완료 | 2026-06-22 23:44:55 KST |
+| DB 인프라 복원 시간 | 약 8분 40초 |
+| 데이터 검증 완료 | 2026-06-22 23:52:48 KST |
+| 복원 요청부터 검증 완료 | 약 16분 32초 |
+| 결과 | `COMPLETED` |
+
+복원된 DB는 `db.t4g.micro`, PostgreSQL 16.14, Single-AZ, private access로 구성했고 도쿄 고객 관리형 KMS key로 암호화했습니다. RDS security group은 검증용 app security group에서 오는 5432만 허용했습니다.
+
+검증 방법:
+
+- SSH 포트를 열지 않은 임시 EC2를 public subnet에 생성하고 SSM으로 접속
+- 원본 RDS secret만 읽을 수 있는 최소 권한 IAM 역할 사용
+- `sslmode=require`로 복원 DB 접속
+- Flyway 이력, schema, 핵심 테이블 row count 확인
+- 검증 후 임시 EC2, IAM 역할/프로파일, 복원 RDS 삭제
+
+검증 결과:
+
+| 대상 | 결과 |
+| --- | ---: |
+| schema | `auth`, `chatbot`, `game`, `order`, `ticket` |
+| Flyway | V1~V4, 5개 이력 |
+| `auth_schema.users` | 6 |
+| `chatbot_schema.faq` | 7 |
+| `game_schema.games` | 3 |
+| `game_schema.seat_sections` | 25 |
+| `game_schema.stadiums` | 5 |
+| `ticket_schema.game_seats` | 600 |
+| `ticket_schema.reservations` | 31 |
+| `ticket_schema.seats` | 1000 |
+
+Recovery Point 생성 이후 적용된 V5 Outbox migration이 복원 DB에는 없었습니다. 이는 최신 운영 DB를 잘못 조회한 것이 아니라, 선택한 04:00 KST 시점의 데이터가 실제로 복원됐다는 추가 증거입니다.
+
+첫 restore job `bb73f9ad-450c-4024-929a-11111ffea3a9`은 `DBName must be null when Restoring for this Engine` 오류로 실패했습니다. RDS snapshot restore에서는 metadata의 `DBName`을 제거해야 하며, 수정 후 두 번째 job이 성공했습니다.
+
+이 측정값은 RDS 복원과 데이터 검증 시간입니다. EKS, Valkey, SQS, backend 재배포와 endpoint 전환은 포함하지 않으므로 전체 리전 DR 목표 RTO 2~4시간을 달성했다고 해석하지 않습니다.

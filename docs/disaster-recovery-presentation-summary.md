@@ -121,6 +121,10 @@ SQS는 예매 요청처럼 비동기로 처리할 수 있는 작업을 안전하
 | Python bounded DB pool 배포 및 RDS 연결 검증 | 완료 |
 | RDS 감속 NORMAL~STOP 단계별 통합 테스트 | 완료 |
 | Python DB pool metric Prometheus 수집 | 완료 |
+| 도쿄 cross-region recovery point 복사 | 완료, 약 7분 6초 |
+| 도쿄 Pilot Light 네트워크 배포 | 완료 |
+| 도쿄 recovery point에서 private RDS 복원 | 완료, 약 8분 40초 |
+| SSM 기반 Flyway/schema/data 검증 | 완료, 복원 요청부터 약 16분 32초 |
 
 복구 리허설 결과:
 
@@ -155,6 +159,16 @@ PITR 리허설 결과:
 | `ticket_schema.game_seats` | 600 |
 | `ticket_schema.reservations` | 8 |
 
+도쿄 리전 복원 리허설 결과:
+
+- Restore job ID: `23cd1509-a73a-4e8b-b143-f1f8390e8d23`
+- private·암호화 RDS 복원 시간: 약 8분 40초
+- 임시 SSM EC2를 통한 데이터 검증까지: 약 16분 32초
+- Flyway V1~V4와 5개 schema, 핵심 테이블 데이터 확인
+- V5 Outbox migration이 없는 것으로 04:00 KST Recovery Point 시점 복원 확인
+- 첫 시도에서 RDS restore metadata의 `DBName` 제약을 발견하고 제거 후 성공
+- 임시 RDS, EC2, IAM 리소스 정리 완료
+
 ## 6. 리전 장애 전략
 
 현재 dev 환경은 서울 리전 단일 리전 기반입니다. 따라서 서울 리전 전체 장애를 자동으로 즉시 복구하는 active-active 구조는 아닙니다. DR 리전은 도쿄(`ap-northeast-1`)로 정하고 Pilot Light 구현을 진행합니다.
@@ -173,6 +187,8 @@ Pilot Light 전략:
 
 - active-active는 가장 빠르지만 비용과 복잡도가 큽니다.
 - Pilot Light는 비용을 줄이면서 핵심 복구 경로를 준비할 수 있어 프로젝트 규모에 적합합니다.
+
+현재는 데이터와 네트워크 Pilot Light 및 RDS 복원 경로까지 검증했습니다. 전체 서비스 RTO 2~4시간을 증명하려면 EKS, Valkey, SQS, backend 재구성과 endpoint 전환 리허설이 추가로 필요합니다.
 
 ## 7. DB connection budget 기반 안정성 설계
 
