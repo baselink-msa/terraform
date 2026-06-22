@@ -164,6 +164,7 @@ PITR 리허설 결과:
 Pilot Light 전략:
 
 - 평상시에는 DR 리전에 최소 구성만 준비합니다.
+- 도쿄에는 KMS/vault/recovery point와 복원용 네트워크 뼈대를 준비합니다.
 - Terraform과 GitOps로 VPC, EKS, SQS, Valkey, backend를 재구성할 수 있게 합니다.
 - RDS daily recovery point를 도쿄 backup vault로 복사합니다.
 - 장애 발생 시 DR 리전에 RDS를 복원하고 backend endpoint를 전환합니다.

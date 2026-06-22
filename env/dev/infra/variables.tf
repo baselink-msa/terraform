@@ -21,6 +21,46 @@ variable "backup_copy_retention_days" {
   }
 }
 
+variable "dr_availability_zones" {
+  description = "Availability zones used by the Tokyo Pilot Light network."
+  type        = list(string)
+  default     = ["ap-northeast-1a", "ap-northeast-1c"]
+
+  validation {
+    condition     = length(var.dr_availability_zones) == 2
+    error_message = "dr_availability_zones must contain exactly two availability zones."
+  }
+}
+
+variable "dr_vpc_cidr" {
+  description = "CIDR block for the Tokyo Pilot Light VPC."
+  type        = string
+  default     = "10.100.0.0/16"
+
+  validation {
+    condition     = can(cidrhost(var.dr_vpc_cidr, 0))
+    error_message = "dr_vpc_cidr must be a valid CIDR block."
+  }
+}
+
+variable "dr_public_subnet_cidrs" {
+  description = "Public subnet CIDRs reserved for future Tokyo ingress resources."
+  type        = list(string)
+  default     = ["10.100.0.0/24", "10.100.10.0/24"]
+}
+
+variable "dr_private_app_subnet_cidrs" {
+  description = "Private application subnet CIDRs reserved for future Tokyo compute resources."
+  type        = list(string)
+  default     = ["10.100.20.0/24", "10.100.30.0/24"]
+}
+
+variable "dr_private_data_subnet_cidrs" {
+  description = "Private data subnet CIDRs used by restored Tokyo RDS instances."
+  type        = list(string)
+  default     = ["10.100.40.0/24", "10.100.50.0/24"]
+}
+
 variable "project_name" {
   description = "Project name used for resource naming and tags."
   type        = string

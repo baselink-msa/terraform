@@ -472,6 +472,34 @@ aws backup list-recovery-points-by-backup-vault `
 남은 검증:
 
 - 다음 daily backup에서 scheduled copy job 자동 생성 확인
-- 도쿄 네트워크와 DB subnet group 준비
+- 도쿄 네트워크와 DB subnet group Terraform 배포
 - 도쿄 recovery point에서 임시 RDS 복원
 - 복원 DB 데이터와 임시 backend smoke test
+
+## 17. 도쿄 Pilot Light 복원 네트워크
+
+도쿄 recovery point만 있어도 데이터는 보호되지만, RDS를 복원하려면 대상 리전의 VPC, 두 개 이상의 subnet, DB subnet group과 security group이 필요합니다.
+
+Terraform 준비 구성:
+
+| 리소스 | 값 | 목적 |
+| --- | --- | --- |
+| VPC | `10.100.0.0/16` | 서울 `10.0.0.0/16`과 CIDR 충돌 방지 |
+| AZ | `ap-northeast-1a`, `ap-northeast-1c` | RDS subnet group의 다중 AZ 요건 충족 |
+| Public subnet | `10.100.0.0/24`, `10.100.10.0/24` | 임시 SSM 검증 인스턴스와 향후 ingress |
+| Private app subnet | `10.100.20.0/24`, `10.100.30.0/24` | 향후 EKS/compute |
+| Private data subnet | `10.100.40.0/24`, `10.100.50.0/24` | 복원 RDS 배치 |
+| NAT Gateway | 생성하지 않음 | 평상시 고정 비용 최소화 |
+| RDS ingress | app security group의 5432만 허용 | DB 직접 공개 방지 |
+
+왜 미리 준비하는가:
+
+- 리전 장애 중 네트워크 설계와 subnet 생성을 새로 시작하는 시간을 줄입니다.
+- 복원 명령에 사용할 DB subnet group과 security group ID가 사전에 확정됩니다.
+- RDS는 private subnet에 유지하면서 임시 검증 workload만 제한적으로 접근할 수 있습니다.
+
+얻게 되는 기능:
+
+- 도쿄 recovery point를 private RDS로 바로 복원할 수 있습니다.
+- 전체 EKS를 만들기 전에 임시 검증 인스턴스로 schema와 데이터를 확인할 수 있습니다.
+- 이후 EKS, Valkey, SQS를 동일한 VPC와 CIDR 정책 위에 확장할 수 있습니다.

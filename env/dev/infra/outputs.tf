@@ -108,6 +108,41 @@ output "rds_dr_backup_kms_key_arn" {
   value       = aws_kms_key.tokyo_backup.arn
 }
 
+output "dr_vpc_id" {
+  description = "VPC ID of the Tokyo Pilot Light network."
+  value       = module.tokyo_vpc.vpc_id
+}
+
+output "dr_public_subnet_ids" {
+  description = "Public subnet IDs reserved for temporary Tokyo validation resources."
+  value       = module.tokyo_vpc.public_subnet_ids
+}
+
+output "dr_private_app_subnet_ids" {
+  description = "Private application subnet IDs in the Tokyo Pilot Light network."
+  value       = module.tokyo_vpc.private_app_subnet_ids
+}
+
+output "dr_private_data_subnet_ids" {
+  description = "Private data subnet IDs used by restored Tokyo RDS instances."
+  value       = module.tokyo_vpc.private_data_subnet_ids
+}
+
+output "dr_rds_subnet_group_name" {
+  description = "DB subnet group used when restoring RDS in Tokyo."
+  value       = aws_db_subnet_group.tokyo_rds.name
+}
+
+output "dr_app_security_group_id" {
+  description = "Security group reserved for temporary Tokyo validation workloads."
+  value       = aws_security_group.tokyo_app.id
+}
+
+output "dr_rds_security_group_id" {
+  description = "Security group assigned to restored Tokyo RDS instances."
+  value       = aws_security_group.tokyo_rds.id
+}
+
 output "redis_primary_endpoint" {
   description = "Primary endpoint of the dev Redis replication group."
   value       = module.elasticache.primary_endpoint_address
