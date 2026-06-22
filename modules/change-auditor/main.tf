@@ -202,6 +202,7 @@ resource "aws_cloudwatch_event_target" "to_sqs" {
 # ────────────────────────────────────────────────────────────────────
 # EventBridge (us-east-1) — IAM/S3/KMS 글로벌 서비스 이벤트 수신
 # 글로벌 서비스 CloudTrail 이벤트는 us-east-1 EventBridge에만 전달됨
+# us-east-1 → ap-northeast-2 event bus로 포워딩
 # ────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_event_rule" "global_service_changes" {
@@ -234,46 +235,59 @@ resource "aws_cloudwatch_event_rule" "global_service_changes" {
   tags = local.common_tags
 }
 
-resource "aws_cloudwatch_event_target" "global_to_sqs" {
+# IAM role for EventBridge to forward events cross-region
+data "aws_iam_policy_document" "eventbridge_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "eventbridge_cross_region" {
+  name               = "${local.name_prefix}-eb-cross-region"
+  assume_role_policy = data.aws_iam_policy_document.eventbridge_assume.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy" "eventbridge_cross_region" {
+  name = "${local.name_prefix}-eb-cross-region"
+  role = aws_iam_role.eventbridge_cross_region.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["events:PutEvents"]
+      Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:event-bus/default"
+    }]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "global_to_regional_bus" {
   provider = aws.use1
 
   rule      = aws_cloudwatch_event_rule.global_service_changes.name
-  target_id = "send-to-sqs-cross-region"
-  arn       = aws_sqs_queue.events.arn
+  target_id = "forward-to-ap-northeast-2"
+  arn       = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:event-bus/default"
+  role_arn  = aws_iam_role.eventbridge_cross_region.arn
 }
 
-# SQS policy: allow us-east-1 EventBridge to send messages
+# SQS policy: allow EventBridge (same region) to send messages
 resource "aws_sqs_queue_policy" "events" {
   queue_url = aws_sqs_queue.events.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "AllowEventBridgeRegional"
-        Effect    = "Allow"
-        Principal = { Service = "events.amazonaws.com" }
-        Action    = "sqs:SendMessage"
-        Resource  = aws_sqs_queue.events.arn
-        Condition = {
-          ArnEquals = {
-            "aws:SourceArn" = aws_cloudwatch_event_rule.cloudtrail_changes.arn
-          }
-        }
-      },
-      {
-        Sid       = "AllowEventBridgeGlobal"
-        Effect    = "Allow"
-        Principal = { Service = "events.amazonaws.com" }
-        Action    = "sqs:SendMessage"
-        Resource  = aws_sqs_queue.events.arn
-        Condition = {
-          ArnEquals = {
-            "aws:SourceArn" = aws_cloudwatch_event_rule.global_service_changes.arn
-          }
-        }
-      }
-    ]
+    Statement = [{
+      Sid       = "AllowEventBridge"
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.events.arn
+    }]
   })
 }
 
