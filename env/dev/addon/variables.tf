@@ -48,7 +48,7 @@ variable "keda_postgres_connection" {
     Keep the real value out of Git by setting it in ignored terraform.tfvars or
     with TF_VAR_keda_postgres_connection.
 
-    If null, Terraform falls back to the RDS master user from Secrets Manager.
+    If null, Terraform uses the fixed application database account from Secrets Manager.
   EOT
   type        = string
   default     = null

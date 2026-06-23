@@ -52,12 +52,17 @@ data "aws_secretsmanager_secret_version" "rds" {
   secret_id = data.terraform_remote_state.infra.outputs.rds_master_user_secret_arn
 }
 
+data "aws_secretsmanager_secret_version" "app_database" {
+  secret_id = data.terraform_remote_state.infra.outputs.app_database_secret_arn
+}
+
 locals {
-  rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
+  rds_creds          = jsondecode(data.aws_secretsmanager_secret_version.rds.secret_string)
+  app_database_creds = jsondecode(data.aws_secretsmanager_secret_version.app_database.secret_string)
 
   keda_postgres_connection = coalesce(
     var.keda_postgres_connection,
-    "postgresql://${urlencode(local.rds_creds["username"])}:${urlencode(local.rds_creds["password"])}@${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform?sslmode=require"
+    "postgresql://${urlencode(local.app_database_creds["username"])}:${urlencode(local.app_database_creds["password"])}@${data.terraform_remote_state.infra.outputs.rds_endpoint}/baseball_platform?sslmode=require"
   )
 }
 
@@ -107,10 +112,10 @@ resource "kubectl_manifest" "backend_config" {
       WAITING_ROOM_DB_CRITICAL_THRESHOLD                      = "55"
       WAITING_ROOM_DB_PRESSURE_CACHE_TTL_MS                   = "5000"
       KNOWLEDGE_BASE_ID                                       = "<bedrock-knowledge-base-id>"
-      OTEL_EXPORTER_OTLP_ENDPOINT                               = "http://jaeger.monitoring:4318"
-      OTEL_TRACES_EXPORTER                                      = "otlp"
-      OTEL_METRICS_EXPORTER                                     = "none"
-      OTEL_LOGS_EXPORTER                                        = "none"
+      OTEL_EXPORTER_OTLP_ENDPOINT                             = "http://jaeger.monitoring:4318"
+      OTEL_TRACES_EXPORTER                                    = "otlp"
+      OTEL_METRICS_EXPORTER                                   = "none"
+      OTEL_LOGS_EXPORTER                                      = "none"
     }
   })
 
@@ -131,14 +136,40 @@ resource "kubectl_manifest" "backend_secret" {
       name      = "backend-secret"
       namespace = "baselink-dev"
       annotations = {
+        "baselink.io/db-secret-hash" = sha256("${local.app_database_creds["username"]}:${local.app_database_creds["password"]}")
+      }
+    }
+    type = "Opaque"
+    stringData = {
+      SPRING_DATASOURCE_USERNAME = local.app_database_creds["username"]
+      SPRING_DATASOURCE_PASSWORD = local.app_database_creds["password"]
+      APP_JWT_SECRET             = random_password.jwt_secret.result
+    }
+  })
+
+  depends_on = [kubectl_manifest.backend_namespace]
+}
+
+resource "kubectl_manifest" "flyway_secret" {
+  sensitive_fields = [
+    "stringData.SPRING_FLYWAY_USER",
+    "stringData.SPRING_FLYWAY_PASSWORD"
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    metadata = {
+      name      = "flyway-secret"
+      namespace = "baselink-dev"
+      annotations = {
         "baselink.io/db-secret-hash" = sha256("${local.rds_creds["username"]}:${local.rds_creds["password"]}")
       }
     }
     type = "Opaque"
     stringData = {
-      SPRING_DATASOURCE_USERNAME = local.rds_creds["username"]
-      SPRING_DATASOURCE_PASSWORD = local.rds_creds["password"]
-      APP_JWT_SECRET             = random_password.jwt_secret.result
+      SPRING_FLYWAY_USER     = local.rds_creds["username"]
+      SPRING_FLYWAY_PASSWORD = local.rds_creds["password"]
     }
   })
 
@@ -341,6 +372,7 @@ resource "kubectl_manifest" "baselink_application" {
     module.argocd,
     kubectl_manifest.backend_config,
     kubectl_manifest.backend_secret,
+    kubectl_manifest.flyway_secret,
     kubectl_manifest.postgres_keda_secret
   ]
 }
