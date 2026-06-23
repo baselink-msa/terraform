@@ -83,6 +83,11 @@ output "rds_master_user_secret_arn" {
   value       = module.rds.master_user_secret_arn
 }
 
+output "app_database_secret_arn" {
+  description = "ARN of the fixed application runtime database credential secret."
+  value       = aws_secretsmanager_secret.app_database.arn
+}
+
 output "rds_backup_vault_name" {
   description = "AWS Backup vault name protecting the dev RDS instance."
   value       = module.backup.backup_vault_name
