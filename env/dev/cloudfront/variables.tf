@@ -52,6 +52,36 @@ variable "cloudfront_api_origin_domain_name" {
   default     = "k8s-baselinkdevapi-91612a5742-1864663002.ap-northeast-2.elb.amazonaws.com"
 }
 
+variable "cloudfront_is_ipv6_enabled" {
+  description = "Whether IPv6 is enabled for viewer requests to the dev CloudFront distribution."
+  type        = bool
+  default     = false
+}
+
+variable "cloudfront_aliases" {
+  description = "Alternate domain names (CNAMEs) associated with the dev CloudFront distribution."
+  type        = list(string)
+  default     = ["baselink.kro.kr"]
+}
+
+variable "cloudfront_acm_certificate_arn" {
+  description = "ACM certificate ARN for the dev CloudFront alternate domain. CloudFront viewer certificates must be issued in us-east-1."
+  type        = string
+  default     = "arn:aws:acm:us-east-1:740831361032:certificate/68e2b29f-91df-437a-bc46-d14a9f55d5f1"
+}
+
+variable "cloudfront_ssl_support_method" {
+  description = "CloudFront SSL support method for the dev alternate domain certificate."
+  type        = string
+  default     = "sni-only"
+}
+
+variable "cloudfront_minimum_protocol_version" {
+  description = "Minimum TLS protocol version for CloudFront viewer connections."
+  type        = string
+  default     = "TLSv1.2_2021"
+}
+
 variable "cloudfront_origin_verify_header_name" {
   description = "Custom header name sent by CloudFront to the API ALB origin."
   type        = string

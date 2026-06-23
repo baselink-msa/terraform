@@ -16,6 +16,11 @@ module "cloudfront" {
   frontend_oac_name                = var.cloudfront_frontend_oac_name
   frontend_oac_description         = "BaseLink frontend S3 OAC"
   api_origin_domain_name           = var.cloudfront_api_origin_domain_name
+  is_ipv6_enabled                  = var.cloudfront_is_ipv6_enabled
+  aliases                          = var.cloudfront_aliases
+  acm_certificate_arn              = var.cloudfront_acm_certificate_arn
+  ssl_support_method               = var.cloudfront_ssl_support_method
+  minimum_protocol_version         = var.cloudfront_minimum_protocol_version
   origin_verify_header_name        = var.cloudfront_origin_verify_header_name
   origin_verify_header_value       = var.cloudfront_origin_verify_header_value
   frontend_cache_policy_id         = var.cloudfront_frontend_cache_policy_id

@@ -138,7 +138,8 @@ aws cloudfront create-invalidation --distribution-id E1L0BJIJOTT0R6 --paths "/*"
 - RDS DB: `baseball_platform`
 - S3 버킷: `baselink-frontend-740831361032-ap-northeast-2`
 - CloudFront 배포 ID: `E1L0BJIJOTT0R6`
-- CloudFront 도메인: `d1z20dvak4bl13.cloudfront.net`
+- CloudFront 사용자 도메인: `baselink.kro.kr`
+- CloudFront 배포 도메인: `d1z20dvak4bl13.cloudfront.net`
 
 ## WAF와 알림
 

@@ -23,10 +23,11 @@ resource "aws_cloudfront_origin_access_control" "frontend_s3" {
 
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
+  aliases             = var.aliases
   comment             = var.distribution_comment
   default_root_object = "index.html"
   http_version        = "http2"
-  is_ipv6_enabled     = true
+  is_ipv6_enabled     = var.is_ipv6_enabled
   price_class         = "PriceClass_200"
   retain_on_delete    = true
   web_acl_id          = var.web_acl_arn
@@ -119,8 +120,10 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
-    minimum_protocol_version       = "TLSv1"
+    cloudfront_default_certificate = var.acm_certificate_arn == null
+    acm_certificate_arn            = var.acm_certificate_arn
+    ssl_support_method             = var.acm_certificate_arn == null ? null : var.ssl_support_method
+    minimum_protocol_version       = var.minimum_protocol_version
   }
 
   tags = var.tags

@@ -155,9 +155,9 @@ variable "cloudfront_distribution_id" {
 }
 
 variable "cloudfront_distribution_domain_name" {
-  description = "CloudFront distribution domain name used by Lambda GAME_API_URL. post-apply-dev.sh refreshes this after the cloudfront layer apply."
+  description = "CloudFront viewer domain used by Lambda GAME_API_URL. post-apply-dev.sh refreshes this after the cloudfront layer apply, preferring the custom alias when configured."
   type        = string
-  default     = "d1z20dvak4bl13.cloudfront.net"
+  default     = "baselink.kro.kr"
 }
 
 variable "github_actions_runner_instance_type" {

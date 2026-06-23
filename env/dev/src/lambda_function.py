@@ -28,7 +28,7 @@ def lambda_handler(event, context):
         end_date_str = end_date_str or today_str
 
     # API 호출
-    api_url = os.environ.get("GAME_API_URL", "https://d1z20dvak4bl13.cloudfront.net/api/games")
+    api_url = os.environ.get("GAME_API_URL", "https://baselink.kro.kr/api/games")
 
     try:
         req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})

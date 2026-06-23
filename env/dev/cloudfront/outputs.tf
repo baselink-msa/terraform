@@ -8,6 +8,11 @@ output "cloudfront_distribution_domain_name" {
   value       = module.cloudfront.distribution_domain_name
 }
 
+output "cloudfront_aliases" {
+  description = "Alternate domain names associated with the dev CloudFront distribution."
+  value       = module.cloudfront.aliases
+}
+
 output "cloudfront_distribution_arn" {
   description = "CloudFront distribution ARN."
   value       = module.cloudfront.distribution_arn

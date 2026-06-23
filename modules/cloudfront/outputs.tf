@@ -8,6 +8,11 @@ output "distribution_domain_name" {
   value       = aws_cloudfront_distribution.frontend.domain_name
 }
 
+output "aliases" {
+  description = "Alternate domain names associated with the CloudFront distribution."
+  value       = aws_cloudfront_distribution.frontend.aliases
+}
+
 output "distribution_arn" {
   description = "CloudFront distribution ARN."
   value       = aws_cloudfront_distribution.frontend.arn
