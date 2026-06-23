@@ -24,6 +24,16 @@ log() {
   echo "[APP-DB] $1"
 }
 
+aws_file_uri() {
+  local path="$1"
+
+  if command -v cygpath >/dev/null 2>&1; then
+    printf 'file://%s' "$(cygpath -w "$path")"
+  else
+    printf 'file://%s' "$path"
+  fi
+}
+
 for command in aws kubectl terraform python3; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Required command not found: $command" >&2
@@ -56,7 +66,7 @@ if ! aws secretsmanager get-secret-value \
   aws secretsmanager put-secret-value \
     --region "$REGION" \
     --secret-id "$APP_SECRET_ARN" \
-    --secret-string "file://$TMP_DIR/app-secret.json" \
+    --secret-string "$(aws_file_uri "$TMP_DIR/app-secret.json")" \
     >/dev/null
   log "Created the fixed application credential value in Secrets Manager."
 else
@@ -144,7 +154,7 @@ spec:
               WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') \gexec
 
               SELECT format(
-                'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+                'ALTER ROLE %I WITH LOGIN PASSWORD %L',
                 :'app_user',
                 :'app_password'
               ) \gexec
@@ -173,18 +183,43 @@ spec:
               ALTER DEFAULT PRIVILEGES FOR ROLE :"master_user" IN SCHEMA order_schema GRANT EXECUTE ON FUNCTIONS TO :"app_user";
               ALTER DEFAULT PRIVILEGES FOR ROLE :"master_user" IN SCHEMA chatbot_schema GRANT EXECUTE ON FUNCTIONS TO :"app_user";
               SQL
+
+              export PGPASSWORD="\$APP_PASSWORD"
+              psql \
+                --username="\$APP_USERNAME" \
+                --set=ON_ERROR_STOP=1 \
+                --tuples-only \
+                --command="
+                  SELECT current_user;
+                  SELECT count(*) FROM game_schema.games;
+                  SELECT count(*) FROM auth_schema.users;
+                  SELECT count(*) FROM ticket_schema.reservations;
+                "
 EOF
 
 kubectl delete job "$BOOTSTRAP_JOB" -n "$NAMESPACE" --ignore-not-found >/dev/null
 kubectl apply -f "$TMP_DIR/job.yaml" >/dev/null
 
 log "Creating or updating the PostgreSQL application account."
-if ! kubectl wait \
-  --for=condition=complete \
-  "job/$BOOTSTRAP_JOB" \
-  -n "$NAMESPACE" \
-  --timeout=180s; then
+for _ in $(seq 1 60); do
+  COMPLETE="$(kubectl get job "$BOOTSTRAP_JOB" -n "$NAMESPACE" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+  FAILED="$(kubectl get job "$BOOTSTRAP_JOB" -n "$NAMESPACE" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
+
+  if [ "$COMPLETE" = "1" ]; then
+    break
+  fi
+
+  if [ -n "$FAILED" ] && [ "$FAILED" != "0" ]; then
+    kubectl logs "job/$BOOTSTRAP_JOB" -n "$NAMESPACE" || true
+    exit 1
+  fi
+
+  sleep 3
+done
+
+if [ "${COMPLETE:-}" != "1" ]; then
   kubectl logs "job/$BOOTSTRAP_JOB" -n "$NAMESPACE" || true
+  echo "Timed out waiting for $BOOTSTRAP_JOB" >&2
   exit 1
 fi
 
