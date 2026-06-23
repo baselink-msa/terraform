@@ -211,7 +211,15 @@ if [ -n "$ALB_HOST" ]; then
       terraform init -input=false -no-color > /dev/null 2>&1
       terraform apply -auto-approve -input=false
     )
-    CF_DOMAIN=$(cd "$ENV_DIR/cloudfront" && terraform output -raw cloudfront_distribution_domain_name 2>/dev/null || echo "")
+    CF_ALIAS=$(cd "$ENV_DIR/cloudfront" && terraform output -json cloudfront_aliases 2>/dev/null | python3 -c "
+import json, sys
+try:
+    aliases = json.load(sys.stdin)
+except Exception:
+    aliases = []
+print(aliases[0] if aliases else '')
+" 2>/dev/null || echo "")
+    CF_DOMAIN="${CF_ALIAS:-$(cd "$ENV_DIR/cloudfront" && terraform output -raw cloudfront_distribution_domain_name 2>/dev/null || echo "")}"
     if [ -n "$CF_DOMAIN" ]; then
       (
         cd "$ENV_DIR/infra"

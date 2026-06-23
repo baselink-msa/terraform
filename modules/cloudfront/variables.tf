@@ -41,6 +41,36 @@ variable "api_origin_domain_name" {
   type        = string
 }
 
+variable "is_ipv6_enabled" {
+  description = "Whether IPv6 is enabled for viewer requests to the CloudFront distribution."
+  type        = bool
+  default     = true
+}
+
+variable "aliases" {
+  description = "Alternate domain names (CNAMEs) associated with the CloudFront distribution."
+  type        = list(string)
+  default     = []
+}
+
+variable "acm_certificate_arn" {
+  description = "ACM certificate ARN for CloudFront viewer HTTPS. The certificate must be in us-east-1. If null, the default CloudFront certificate is used."
+  type        = string
+  default     = null
+}
+
+variable "ssl_support_method" {
+  description = "CloudFront SSL support method used when acm_certificate_arn is set."
+  type        = string
+  default     = "sni-only"
+}
+
+variable "minimum_protocol_version" {
+  description = "Minimum TLS protocol version for CloudFront viewer connections."
+  type        = string
+  default     = "TLSv1"
+}
+
 variable "origin_verify_header_name" {
   description = "Custom header name sent by CloudFront to the API ALB origin."
   type        = string
