@@ -41,7 +41,7 @@ fi
 log "backend-secret 동기화 중..."
 kubectl create namespace baselink-dev 2>/dev/null || true
 
-RDS_SECRET_ARN=$(aws rds describe-db-instances --db-instance-identifier baselink-dev-postgres --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text 2>/dev/null || echo "")
+RDS_SECRET_ARN=$(cd "$ENV_DIR/infra" && terraform output -raw app_database_secret_arn 2>/dev/null || echo "")
 if [ -n "$RDS_SECRET_ARN" ] && [ "$RDS_SECRET_ARN" != "None" ]; then
   RDS_CREDS=$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET_ARN" --query 'SecretString' --output text)
   DB_USER=$(echo "$RDS_CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
