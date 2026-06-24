@@ -85,6 +85,16 @@ resource "aws_iam_role_policy" "backend_runtime_kafka" {
         Resource = local.kafka_topic_arns
       },
       {
+        Sid    = "BootstrapKafkaTopics"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:CreateTopic",
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:AlterTopic"
+        ]
+        Resource = local.kafka_topic_arns
+      },
+      {
         Sid    = "ConsumeKafkaEvents"
         Effect = "Allow"
         Action = [
