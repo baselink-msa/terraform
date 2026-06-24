@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | Slack 알림 경로 확인, Python DB pool 전용 패널/알림은 모니터링 담당자 협업 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 1+ 검증 완료 | MSK Serverless 생성, PrivateLink 네트워크, AWS_MSK_IAM client smoke test, topic 5개 생성 완료 |
+| Kafka/MSK 개인 프로젝트 | Phase 2 준비 중 | MSK Serverless, IAM client smoke test, topic 5개 생성 완료. Backend Kafka config 주입 PR 준비 완료 |
 | 발표 문서 | 진행 중 | DR/Backup/Outbox/Kafka 문서가 있으며 최종 발표용 캡처와 요약 보강 필요 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -327,7 +327,49 @@ ticket.domain.events
 waiting.operational.events
 ```
 
-### P0: Backend/GitOps Kafka config 주입
+### 진행 중: Backend/GitOps Kafka config 주입
+
+목표:
+
+- Terraform addon `backend-config`에 Kafka 접속 정보와 topic 이름을 추가한다.
+- GitOps Deployment가 `backend-config` 변경을 감지해 rolling restart되도록 Reloader annotation을 보강한다.
+- Backend producer 코드가 들어가기 전에 공통 환경변수 이름을 고정한다.
+
+준비한 PR:
+
+```text
+Terraform: feat/kafka-backend-config
+GitOps:    feat/backend-config-reloader
+```
+
+추가 예정 환경변수:
+
+```text
+KAFKA_ENABLED=true
+KAFKA_BOOTSTRAP_SERVERS=boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098
+KAFKA_SECURITY_PROTOCOL=SASL_SSL
+KAFKA_SASL_MECHANISM=AWS_MSK_IAM
+KAFKA_TOPIC_TICKET_DOMAIN_EVENTS=ticket.domain.events
+KAFKA_TOPIC_WAITING_OPERATIONAL_EVENTS=waiting.operational.events
+KAFKA_TOPIC_RESERVATION_LIFECYCLE_EVENTS=reservation.lifecycle.events
+KAFKA_TOPIC_CAPACITY_SIGNALS=capacity.signals
+KAFKA_TOPIC_INFRA_AUDIT_EVENTS=infra.audit.events
+```
+
+주의:
+
+- Terraform PR merge와 Apply Dev가 먼저 필요하다.
+- 그 다음 GitOps PR을 merge해 Reloader annotation을 반영한다.
+- ConfigMap 환경변수는 Pod 시작 시점에 주입되므로, configmap Reloader annotation이 있어야 기존 Pod도 새 값을 받는다.
+
+완료 후 검증:
+
+```bash
+kubectl get configmap backend-config -n baselink-dev -o yaml
+kubectl exec -n baselink-dev deploy/ticket-service -- printenv | grep KAFKA
+```
+
+### P0 다음: ticket outbox publisher dual publish
 
 목표:
 
