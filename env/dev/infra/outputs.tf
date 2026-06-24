@@ -258,6 +258,11 @@ output "kafka_event_streaming_bootstrap_brokers_sasl_iam" {
   value       = module.kafka_event_streaming.bootstrap_brokers_sasl_iam
 }
 
+output "kafka_event_streaming_config_secret_arn" {
+  description = "Optional Secrets Manager secret containing MSK Serverless runtime connection settings."
+  value       = var.enable_kafka_event_streaming ? aws_secretsmanager_secret.kafka_event_streaming_config[0].arn : null
+}
+
 output "ticket_event_glue_database_name" {
   description = "Glue Data Catalog database for ticket events."
   value       = module.ticket_event_writer.glue_database_name
