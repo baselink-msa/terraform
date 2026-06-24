@@ -157,6 +157,13 @@ Partition key:
 - backend runtime IRSA role이 Kafka 접근 권한과 runtime config Secret 조회 권한을 가짐
 - 임시 Kafka client pod 또는 이후 Backend producer에서 topic metadata 조회
 
+진행 상태:
+
+- 2026-06-24 기준 MSK Serverless cluster 생성 완료
+- EKS 내부 network smoke test 완료
+- EKS 내부 Kafka CLI `AWS_MSK_IAM` client smoke test 완료
+- 아직 Kafka topic 생성과 서비스 producer 연동은 진행하지 않음
+
 ### Phase 2: Dual publisher
 
 기존 SQS 경로는 유지합니다.
