@@ -248,6 +248,16 @@ output "ticket_event_writer_function_name" {
   value       = module.ticket_event_writer.lambda_function_name
 }
 
+output "kafka_event_streaming_cluster_arn" {
+  description = "Optional MSK Serverless event streaming cluster ARN."
+  value       = module.kafka_event_streaming.cluster_arn
+}
+
+output "kafka_event_streaming_bootstrap_brokers_sasl_iam" {
+  description = "Optional MSK Serverless IAM bootstrap brokers."
+  value       = module.kafka_event_streaming.bootstrap_brokers_sasl_iam
+}
+
 output "ticket_event_glue_database_name" {
   description = "Glue Data Catalog database for ticket events."
   value       = module.ticket_event_writer.glue_database_name
