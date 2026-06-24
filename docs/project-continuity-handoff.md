@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | Slack 알림 경로 확인, Python DB pool 전용 패널/알림은 모니터링 담당자 협업 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 1 검증 완료 | MSK Serverless 생성, PrivateLink 네트워크, AWS_MSK_IAM client smoke test 완료 |
+| Kafka/MSK 개인 프로젝트 | Phase 1+ 검증 완료 | MSK Serverless 생성, PrivateLink 네트워크, AWS_MSK_IAM client smoke test, topic 5개 생성 완료 |
 | 발표 문서 | 진행 중 | DR/Backup/Outbox/Kafka 문서가 있으며 최종 발표용 캡처와 요약 보강 필요 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -232,6 +232,8 @@ Kafka 도입 목적:
 - backend runtime IRSA Kafka policy 생성
 - EKS 내부 network smoke test 성공
 - EKS 내부 Kafka CLI `AWS_MSK_IAM` client smoke test 성공
+- backend runtime IRSA topic bootstrap 권한 추가
+- Kafka topic 5개 생성 및 목록 조회 성공
 
 현재 확인된 bootstrap broker:
 
@@ -248,7 +250,7 @@ arn:aws:kafka:ap-northeast-2:740831361032:cluster/baselink-dev-event-streaming/5
 주의:
 
 - MSK Serverless는 실제 비용이 발생할 수 있다.
-- Kafka topic은 아직 생성하지 않았다.
+- Kafka topic은 생성 완료했다.
 - Backend producer와 Kafka dual publish는 아직 구현하지 않았다.
 
 참고 문서:
@@ -271,24 +273,24 @@ Kafka/MSK Serverless 기반 이벤트 스트리밍 플랫폼을 구축해
 현재 단계:
 
 ```text
-Phase 1 완료
+Phase 1+ 완료
 -> MSK Serverless 인프라 생성
 -> EKS 내부 네트워크 접근 검증
 -> AWS_MSK_IAM client smoke test 검증
+-> Kafka topic 5개 생성과 목록 조회 검증
 ```
 
 다음 단계:
 
 ```text
 Phase 2 준비
--> Kafka topic bootstrap
 -> Backend/GitOps Kafka config 주입
 -> Outbox publisher dual publish
 ```
 
 ## 7. 남은 작업 우선순위
 
-### P0: Kafka topic bootstrap
+### 완료: Kafka topic bootstrap
 
 목표:
 
@@ -308,12 +310,24 @@ infra.audit.events
 - Kafka CLI와 AWS MSK IAM auth jar를 사용한다.
 - topic 생성 후 `kafka-topics.sh --list`로 검증한다.
 
-왜 필요한가:
+결과:
 
-- 지금은 broker 접근만 검증했고 topic은 아직 없다.
-- producer 연동 전에 topic이 존재해야 Backend 테스트가 쉬워진다.
+- 2026-06-25 기준 topic 5개 생성 완료
+- `KAFKA_TOPIC_LIST_FINAL_OK` 확인
+- GitOps `kafka-topic-bootstrap` PostSync hook manifest는 main에 반영
+- 최초 sync에서 hook Job 실행 흔적이 남지 않아 동일 명령을 임시 Pod에서 수동 실행해 topic 생성을 완료
 
-### P1: Backend/GitOps Kafka config 주입
+생성 완료 topic:
+
+```text
+capacity.signals
+infra.audit.events
+reservation.lifecycle.events
+ticket.domain.events
+waiting.operational.events
+```
+
+### P0: Backend/GitOps Kafka config 주입
 
 목표:
 
@@ -410,7 +424,7 @@ Kafka는 이벤트 스트리밍/분석 경로다.
 ```text
 terraform/docs/project-continuity-handoff.md를 먼저 읽고 현재 작업 맥락을 복구해줘.
 나는 Baselink 프로젝트에서 데이터 안정성/DR/비동기 처리/Kafka 이벤트 스트리밍 파트를 담당하고 있어.
-현재 Kafka/MSK Serverless Phase 1은 완료됐고, 다음 작업은 Kafka topic bootstrap Job부터 이어가면 돼.
+현재 Kafka/MSK Serverless Phase 1과 Kafka topic bootstrap은 완료됐고, 다음 작업은 Backend/GitOps Kafka config 주입부터 이어가면 돼.
 작업 후에는 항상 왜 이 작업을 했는지와 어떤 결과를 얻는지 쉽게 설명해줘.
 PR 생성은 내가 할 테니 commit/push까지만 해줘.
 ```
