@@ -47,3 +47,18 @@ output "internet_gateway_id" {
   description = "ID of the internet gateway."
   value       = aws_internet_gateway.this.id
 }
+
+output "s3_gateway_endpoint_id" {
+  description = "ID of the S3 gateway VPC endpoint."
+  value       = aws_vpc_endpoint.s3.id
+}
+
+output "interface_endpoint_ids" {
+  description = "IDs of interface VPC endpoints keyed by service suffix."
+  value       = { for service, endpoint in aws_vpc_endpoint.interface : service => endpoint.id }
+}
+
+output "interface_endpoint_security_group_id" {
+  description = "Security group ID attached to interface VPC endpoints, or null when no interface endpoint is enabled."
+  value       = try(aws_security_group.interface_endpoints[0].id, null)
+}

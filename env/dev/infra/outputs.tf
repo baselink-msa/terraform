@@ -43,6 +43,21 @@ output "internet_gateway_id" {
   value       = module.vpc.internet_gateway_id
 }
 
+output "s3_gateway_endpoint_id" {
+  description = "ID of the S3 gateway VPC endpoint."
+  value       = module.vpc.s3_gateway_endpoint_id
+}
+
+output "interface_endpoint_ids" {
+  description = "Interface VPC endpoint IDs keyed by service suffix."
+  value       = module.vpc.interface_endpoint_ids
+}
+
+output "interface_endpoint_security_group_id" {
+  description = "Security group ID attached to interface VPC endpoints."
+  value       = module.vpc.interface_endpoint_security_group_id
+}
+
 output "eks_cluster_name" {
   description = "Name of the dev EKS cluster."
   value       = module.eks.cluster_name

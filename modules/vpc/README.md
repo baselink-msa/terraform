@@ -16,6 +16,9 @@
 - Public Route Table
 - Private Route Table
 - Route Table Association
+- S3 Gateway VPC Endpoint
+- Interface VPC Endpoint
+- Security Group for Interface VPC Endpoint
 
 ## 네트워크 구조
 
@@ -105,9 +108,57 @@ Private Subnet
 -> Internet
 ```
 
-NAT Gateway는 비용이 발생하므로 dev 기본값은 `single_nat_gateway = true`이다.
+dev 기본값은 운영 전환을 고려해 `single_nat_gateway = false`이다.
 
-이 경우 NAT Gateway는 첫 번째 public subnet에만 1개 생성되고, 모든 private subnet이 이 NAT Gateway를 공유한다.
+이 경우 public subnet이 있는 AZ마다 NAT Gateway를 1개씩 만들고, private app/data subnet은 같은 AZ의 private route table을 통해 같은 AZ의 NAT Gateway로 나간다.
+
+```text
+Private App Subnet A -> Private Route Table A -> NAT Gateway A
+Private App Subnet C -> Private Route Table C -> NAT Gateway C
+Private Data Subnet A -> Private Route Table A -> NAT Gateway A
+Private Data Subnet C -> Private Route Table C -> NAT Gateway C
+```
+
+이 구조는 NAT Gateway 장애 범위를 AZ 단위로 격리하고, 다른 AZ의 NAT Gateway를 경유하면서 발생할 수 있는 cross-AZ 데이터 처리 비용을 줄인다.
+
+비용을 우선하는 임시 dev 환경에서는 `single_nat_gateway = true`로 되돌려 NAT Gateway를 1개만 사용할 수 있다.
+
+## VPC Endpoint
+
+이 모듈은 기본적으로 S3 Gateway Endpoint를 private route table에 연결한다.
+
+ECR 이미지 pull 최적화를 위해 interface endpoint도 선택적으로 생성할 수 있다.
+
+dev 환경 기본 interface endpoint:
+
+```text
+ecr.api
+ecr.dkr
+monitoring
+sqs
+sts
+```
+
+ECR image pull 경로는 아래처럼 나뉜다.
+
+```text
+EKS Node / Pod
+-> ECR API / ECR Docker Registry: Interface Endpoint
+-> ECR image layer object: S3 Gateway Endpoint
+```
+
+따라서 ECR용 interface endpoint를 추가하더라도 S3 gateway endpoint는 유지하는 것이 맞다.
+
+서비스별 용도는 아래와 같다.
+
+| Endpoint | Type | 용도 |
+| --- | --- | --- |
+| `s3` | Gateway | ECR image layer 다운로드, S3 객체 접근 |
+| `ecr.api` | Interface | ECR 인증 토큰, 이미지 메타데이터, tag/digest 조회 |
+| `ecr.dkr` | Interface | Docker Registry API, image manifest 조회 |
+| `monitoring` | Interface | CloudWatch Metrics API. YACE, CloudWatch scaler가 `GetMetricData`, `ListMetrics` 등을 호출할 때 사용 |
+| `sqs` | Interface | KEDA SQS scaler, ticket-service, ticket-worker-service의 SQS API 호출 |
+| `sts` | Interface | IRSA/WebIdentity 기반 Pod가 AWS 임시 자격증명을 받을 때 사용 |
 
 ## EKS 연동 태그
 
@@ -132,6 +183,8 @@ EKS 클러스터 이름이 아직 정해지지 않았다면 빈 문자열로 두
 | `private_data_subnet_cidrs` | private data subnet CIDR 목록 |
 | `enable_nat_gateway` | NAT Gateway 생성 여부 |
 | `single_nat_gateway` | NAT Gateway를 1개만 만들지 여부 |
+| `interface_endpoint_services` | Interface VPC Endpoint를 만들 AWS service suffix 목록 |
+| `interface_endpoint_private_dns_enabled` | Interface VPC Endpoint private DNS 활성화 여부 |
 | `eks_cluster_name` | EKS subnet discovery tag에 사용할 클러스터 이름 |
 
 ## 주요 출력값
@@ -148,6 +201,9 @@ EKS 클러스터 이름이 아직 정해지지 않았다면 빈 문자열로 두
 | `nat_gateway_id` | 첫 번째 NAT Gateway ID |
 | `nat_gateway_ids` | NAT Gateway ID 목록 |
 | `internet_gateway_id` | Internet Gateway ID |
+| `s3_gateway_endpoint_id` | S3 Gateway VPC Endpoint ID |
+| `interface_endpoint_ids` | Service suffix별 Interface VPC Endpoint ID |
+| `interface_endpoint_security_group_id` | Interface VPC Endpoint Security Group ID |
 
 ## dev 환경 호출 위치
 
@@ -166,7 +222,11 @@ dev/infra/terraform.tfstate
 ## 주의사항
 
 - `enable_nat_gateway = true`이면 NAT Gateway 비용이 발생한다.
-- `single_nat_gateway = true`는 dev 비용 절감에는 좋지만, 하나의 AZ 장애에 더 취약하다.
-- prod에서는 가용성을 위해 AZ별 NAT Gateway 구성을 고려하는 것이 좋다.
+- `single_nat_gateway = false`는 NAT Gateway를 AZ별로 만들기 때문에 가용성과 AZ-local routing에는 유리하지만 NAT Gateway 시간 비용은 증가한다.
+- `single_nat_gateway = true`는 비용 절감에는 좋지만, 하나의 AZ 장애에 더 취약하고 다른 AZ private subnet의 외부 통신이 cross-AZ NAT 경로를 탈 수 있다.
+- ECR image pull의 NAT 의존도를 줄이려면 `ecr.api`, `ecr.dkr` interface endpoint와 S3 gateway endpoint가 함께 필요하다.
+- YACE처럼 CloudWatch metric을 읽는 Pod가 있으면 `monitoring` endpoint가 필요하다.
+- SQS를 직접 호출하는 Pod나 KEDA SQS scaler가 있으면 `sqs` endpoint가 필요하다.
+- IRSA를 사용하는 Pod가 있으면 `sts` endpoint를 함께 두는 것이 NAT 의존도 감소에 유리하다.
 - 팀 공통 태그 정책은 아직 합의 전이므로 이 모듈에는 공통 태그를 적용하지 않았다.
 - Public ALB 직접 접근 제한은 이 모듈만으로 완성되지 않는다. ALB Security Group, CloudFront prefix list, Listener Rule header 검증과 함께 설계해야 한다.

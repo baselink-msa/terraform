@@ -147,9 +147,15 @@ variable "enable_nat_gateway" {
 }
 
 variable "single_nat_gateway" {
-  description = "Whether to create a single shared NAT gateway for dev cost control."
+  description = "Whether to create a single shared NAT gateway. Keep false for AZ-aligned private routing."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "vpc_interface_endpoint_services" {
+  description = "Interface VPC endpoint service suffixes enabled in private app subnets."
+  type        = set(string)
+  default     = ["ecr.api", "ecr.dkr", "monitoring", "sqs", "sts"]
 }
 
 variable "eks_cluster_name" {

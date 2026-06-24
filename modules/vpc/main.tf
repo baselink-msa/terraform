@@ -200,3 +200,50 @@ resource "aws_vpc_endpoint" "s3" {
     Name = "${local.name_prefix}-s3-gw"
   }
 }
+
+resource "aws_security_group" "interface_endpoints" {
+  count = length(var.interface_endpoint_services) > 0 ? 1 : 0
+
+  name        = "${local.name_prefix}-interface-endpoints"
+  description = "HTTPS access to private interface VPC endpoints"
+  vpc_id      = aws_vpc.this.id
+
+  tags = {
+    Name = "${local.name_prefix}-interface-endpoints"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "interface_endpoints_https_from_vpc" {
+  count = length(var.interface_endpoint_services) > 0 ? 1 : 0
+
+  security_group_id = aws_security_group.interface_endpoints[0].id
+  cidr_ipv4         = aws_vpc.this.cidr_block
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "HTTPS from VPC resources"
+}
+
+resource "aws_vpc_security_group_egress_rule" "interface_endpoints_all" {
+  count = length(var.interface_endpoint_services) > 0 ? 1 : 0
+
+  security_group_id = aws_security_group.interface_endpoints[0].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+  description       = "Allow endpoint return traffic"
+}
+
+resource "aws_vpc_endpoint" "interface" {
+  for_each = var.interface_endpoint_services
+
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [for key in sort(keys(aws_subnet.private_app)) : aws_subnet.private_app[key].id]
+  security_group_ids  = [aws_security_group.interface_endpoints[0].id]
+  private_dns_enabled = var.interface_endpoint_private_dns_enabled
+
+  tags = {
+    Name = "${local.name_prefix}-${replace(each.key, ".", "-")}-vpce"
+  }
+}
