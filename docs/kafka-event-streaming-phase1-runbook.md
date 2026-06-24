@@ -175,9 +175,69 @@ Phase 1은 다음 조건을 만족하면 완료로 본다.
 - Terraform output으로 bootstrap broker를 확인할 수 있다.
 - Kafka runtime config Secret이 생성되어 있다.
 - backend runtime IRSA role이 Kafka 접근 권한과 Secret 조회 권한을 가진다.
+- EKS 내부 임시 Pod에서 MSK broker DNS를 PrivateLink endpoint로 해석할 수 있다.
+- EKS 내부 임시 Pod에서 MSK IAM broker port `9098` TCP 연결을 확인할 수 있다.
+- EKS 내부 Kafka CLI에서 `AWS_MSK_IAM` 인증으로 broker metadata 또는 topic 목록 조회를 수행할 수 있다.
 - 기존 SQS 기반 예매 확정 경로가 영향을 받지 않는다.
 
-## 7. 롤백 절차
+## 7. Phase 1 검증 기록
+
+검증 일시:
+
+```text
+2026-06-24
+```
+
+검증 결과:
+
+- MSK Serverless cluster `baselink-dev-event-streaming` 생성 완료
+- cluster 상태 `ACTIVE` 확인
+- Kafka runtime config Secret `baselink-dev/kafka/event-streaming` 생성 확인
+- backend runtime IRSA role에 Kafka 접근 policy 확인
+- EKS 내부 Pod에서 broker DNS 조회 성공
+- EKS 내부 Pod에서 TCP `9098` 연결 성공
+- EKS 내부 Kafka CLI에서 `AWS_MSK_IAM` 인증 기반 topic 목록 조회 성공
+
+확인된 bootstrap broker:
+
+```text
+boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098
+```
+
+네트워크 smoke test 결과:
+
+```text
+boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com
+-> vpce-...ap-northeast-2.vpce.amazonaws.com
+-> private IP 10.0.40.x / 10.0.50.x
+
+9098 open
+```
+
+IAM client smoke test 결과:
+
+```text
+KAFKA_IAM_SMOKE_OK
+```
+
+의미:
+
+```text
+EKS backend-runtime service account
+-> backend runtime IRSA
+-> AWS_MSK_IAM
+-> MSK Serverless broker metadata 조회
+```
+
+까지 확인되었다.
+
+주의:
+
+- 아직 Kafka topic은 생성하지 않았다.
+- 따라서 topic 목록 조회 결과는 비어 있을 수 있다.
+- 현재 검증은 “Kafka 인프라 접근 가능성”을 확인한 것이며, 실제 서비스 이벤트 publish는 Backend/GitOps 연동 단계에서 진행한다.
+
+## 8. 롤백 절차
 
 Kafka 인프라를 잠시 비활성화해야 한다면 `DEV_INFRA_TFVARS`에서 다음 값을 다시 설정한다.
 
@@ -199,7 +259,7 @@ enable_kafka_event_streaming = false
 - Secrets Manager secret은 `recovery_window_in_days = 7`로 설정되어 있어 즉시 영구 삭제되지 않는다.
 - Kafka는 아직 핵심 예매 처리 경로가 아니므로, Phase 1 롤백이 기존 SQS 기반 예매 확정 흐름을 중단시키면 안 된다.
 
-## 8. 다음 단계
+## 9. 다음 단계
 
 Phase 1 완료 후 다음 작업은 Backend/GitOps 연동이다.
 
