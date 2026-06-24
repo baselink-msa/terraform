@@ -155,7 +155,7 @@ variable "single_nat_gateway" {
 variable "vpc_interface_endpoint_services" {
   description = "Interface VPC endpoint service suffixes enabled in private app subnets."
   type        = set(string)
-  default     = ["ecr.api", "ecr.dkr", "monitoring", "sqs", "sts"]
+  default     = ["ecr.api", "ecr.dkr"]
 }
 
 variable "eks_cluster_name" {

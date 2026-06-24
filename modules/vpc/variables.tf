@@ -86,7 +86,7 @@ variable "single_nat_gateway" {
 }
 
 variable "interface_endpoint_services" {
-  description = "AWS regional service suffixes for interface VPC endpoints, for example ecr.api, ecr.dkr, and logs."
+  description = "AWS regional service suffixes for interface VPC endpoints, for example ecr.api and ecr.dkr."
   type        = set(string)
   default     = []
 }
