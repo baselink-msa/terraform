@@ -31,6 +31,32 @@ locals {
   ] : []
 }
 
+resource "aws_secretsmanager_secret" "kafka_event_streaming_config" {
+  count = var.enable_kafka_event_streaming ? 1 : 0
+
+  name                    = "${local.name_prefix}/kafka/event-streaming"
+  description             = "MSK Serverless connection settings for Baselink event streaming producers and consumers."
+  recovery_window_in_days = 7
+
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-kafka-event-streaming"
+    Purpose = "event-streaming-runtime-config"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "kafka_event_streaming_config" {
+  count = var.enable_kafka_event_streaming ? 1 : 0
+
+  secret_id = aws_secretsmanager_secret.kafka_event_streaming_config[0].id
+  secret_string = jsonencode({
+    clusterArn              = module.kafka_event_streaming.cluster_arn
+    bootstrapBrokersSaslIam = module.kafka_event_streaming.bootstrap_brokers_sasl_iam
+    topics                  = local.kafka_event_topics
+    securityProtocol        = "SASL_SSL"
+    saslMechanism           = "AWS_MSK_IAM"
+  })
+}
+
 resource "aws_iam_role_policy" "backend_runtime_kafka" {
   count = var.enable_kafka_event_streaming ? 1 : 0
 
@@ -66,6 +92,15 @@ resource "aws_iam_role_policy" "backend_runtime_kafka" {
           "kafka-cluster:DescribeGroup"
         ]
         Resource = local.kafka_group_arns
+      },
+      {
+        Sid    = "ReadKafkaRuntimeConfig"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = aws_secretsmanager_secret.kafka_event_streaming_config[0].arn
       }
     ]
   })

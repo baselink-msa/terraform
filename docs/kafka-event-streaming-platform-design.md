@@ -147,12 +147,15 @@ Partition key:
 - MSK Serverless cluster 생성
 - EKS cluster security group에서 MSK IAM broker port `9098` 접근 허용
 - bootstrap broker output 확인
+- bootstrap broker와 topic 목록을 Secrets Manager runtime config로 저장
 
 완료 조건:
 
 - AWS 콘솔에서 MSK cluster 확인
 - Terraform output으로 IAM bootstrap broker 확인
-- 임시 Kafka client pod에서 topic metadata 조회
+- Secrets Manager에서 `baselink-dev/kafka/event-streaming` Secret 확인
+- backend runtime IRSA role이 Kafka 접근 권한과 runtime config Secret 조회 권한을 가짐
+- 임시 Kafka client pod 또는 이후 Backend producer에서 topic metadata 조회
 
 ### Phase 2: Dual publisher
 
