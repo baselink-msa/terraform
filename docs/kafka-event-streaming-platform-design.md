@@ -179,12 +179,15 @@ infra.audit.events
 
 기존 SQS 경로는 유지합니다.
 
+- Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수를 주입합니다.
+- GitOps Deployment에 `backend-config` Reloader annotation을 추가해 ConfigMap 변경 시 Pod가 새 환경변수를 받게 합니다.
 - waiting-room-service 이벤트를 SQS와 Kafka에 dual publish
 - ticket-service Outbox publisher도 domain event를 SQS와 Kafka에 dual publish
 - Kafka publish 실패는 핵심 요청을 실패시키지 않습니다.
 
 완료 조건:
 
+- backend Pod에서 Kafka 환경변수 확인
 - SQS 기존 이벤트 파이프라인 정상
 - Kafka topic에도 동일 envelope 적재
 - producer 실패 metric 확인
