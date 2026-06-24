@@ -197,6 +197,8 @@ Phase 1은 다음 조건을 만족하면 완료로 본다.
 - EKS 내부 Pod에서 broker DNS 조회 성공
 - EKS 내부 Pod에서 TCP `9098` 연결 성공
 - EKS 내부 Kafka CLI에서 `AWS_MSK_IAM` 인증 기반 topic 목록 조회 성공
+- backend runtime IRSA role에 topic bootstrap 권한 추가 확인
+- Kafka topic 5개 생성 및 목록 조회 성공
 
 확인된 bootstrap broker:
 
@@ -220,6 +222,17 @@ IAM client smoke test 결과:
 KAFKA_IAM_SMOKE_OK
 ```
 
+Topic bootstrap 결과:
+
+```text
+capacity.signals
+infra.audit.events
+reservation.lifecycle.events
+ticket.domain.events
+waiting.operational.events
+KAFKA_TOPIC_LIST_FINAL_OK
+```
+
 의미:
 
 ```text
@@ -227,15 +240,16 @@ EKS backend-runtime service account
 -> backend runtime IRSA
 -> AWS_MSK_IAM
 -> MSK Serverless broker metadata 조회
+-> Kafka topic 생성과 목록 조회
 ```
 
 까지 확인되었다.
 
 주의:
 
-- 아직 Kafka topic은 생성하지 않았다.
-- 따라서 topic 목록 조회 결과는 비어 있을 수 있다.
-- 현재 검증은 “Kafka 인프라 접근 가능성”을 확인한 것이며, 실제 서비스 이벤트 publish는 Backend/GitOps 연동 단계에서 진행한다.
+- Kafka topic은 GitOps bootstrap Job과 동일한 명령을 임시 Pod에서 수동 실행해 생성했다.
+- GitOps `kafka-topic-bootstrap` PostSync hook manifest는 main에 반영되어 있으나, 최초 sync에서 hook Job 실행 흔적이 남지 않아 수동 검증으로 topic 생성을 완료했다.
+- 실제 서비스 이벤트 publish는 Backend/GitOps producer 연동 단계에서 진행한다.
 
 ## 8. 롤백 절차
 
