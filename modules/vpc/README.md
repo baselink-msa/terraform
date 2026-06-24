@@ -138,16 +138,28 @@ Private Data Subnet C -> Private Data Route Table C -> NAT Gateway C
 
 이 모듈은 기본적으로 S3 Gateway Endpoint를 private route table에 연결한다.
 
-ECR 이미지 pull 최적화를 위해 interface endpoint도 선택적으로 생성할 수 있다.
+NAT Gateway가 있으면 private subnet에서도 AWS API와 ECR 접근은 가능하다.
+따라서 interface endpoint는 기능 필수 요소라기보다 NAT Gateway 데이터 처리 비용을 줄이고, AWS 서비스 트래픽을 AWS 백본 내부 경로로 유지하기 위한 비용/보안 최적화 선택지다.
+
+비용 판단 기준은 아래와 같다.
+
+```text
+NAT Gateway 데이터 처리 비용
+vs
+Interface Endpoint 시간당 고정 요금 + 데이터 처리 비용
+```
+
+트래픽이 많거나 이미지 pull 빈도와 이미지 크기가 큰 환경에서는 ECR용 interface endpoint가 유리할 수 있다.
+반대로 호출량이 적은 dev 환경에서는 interface endpoint의 AZ별 ENI 시간 비용이 NAT 경유 비용보다 클 수 있다.
+
+S3 Gateway Endpoint는 시간당 요금과 데이터 처리 요금이 없기 때문에 private route table에 기본 연결한다.
+ECR image layer 다운로드 경로에서도 S3가 사용되므로 S3 Gateway Endpoint는 유지한다.
 
 dev 환경 기본 interface endpoint:
 
 ```text
 ecr.api
 ecr.dkr
-monitoring
-sqs
-sts
 ```
 
 ECR image pull 경로는 아래처럼 나뉜다.
@@ -167,9 +179,9 @@ EKS Node / Pod
 | `s3` | Gateway | ECR image layer 다운로드, S3 객체 접근 |
 | `ecr.api` | Interface | ECR 인증 토큰, 이미지 메타데이터, tag/digest 조회 |
 | `ecr.dkr` | Interface | Docker Registry API, image manifest 조회 |
-| `monitoring` | Interface | CloudWatch Metrics API. YACE, CloudWatch scaler가 `GetMetricData`, `ListMetrics` 등을 호출할 때 사용 |
-| `sqs` | Interface | KEDA SQS scaler, ticket-service, ticket-worker-service의 SQS API 호출 |
-| `sts` | Interface | IRSA/WebIdentity 기반 Pod가 AWS 임시 자격증명을 받을 때 사용 |
+
+`monitoring`, `sqs`, `sts` 같은 추가 interface endpoint는 관련 호출량이 충분히 크거나 AWS 서비스 트래픽을 더 엄격히 내부화해야 할 때 별도로 활성화한다.
+현재 dev 기본값에서는 비용 대비 효과를 고려해 제외한다.
 
 ## EKS 연동 태그
 
@@ -240,8 +252,7 @@ dev/infra/terraform.tfstate
 - `single_nat_gateway = false`는 NAT Gateway를 AZ별로 만들기 때문에 가용성과 AZ-local routing에는 유리하지만 NAT Gateway 시간 비용은 증가한다.
 - `single_nat_gateway = true`는 비용 절감에는 좋지만, 하나의 AZ 장애에 더 취약하고 다른 AZ private subnet의 외부 통신이 cross-AZ NAT 경로를 탈 수 있다.
 - ECR image pull의 NAT 의존도를 줄이려면 `ecr.api`, `ecr.dkr` interface endpoint와 S3 gateway endpoint가 함께 필요하다.
-- YACE처럼 CloudWatch metric을 읽는 Pod가 있으면 `monitoring` endpoint가 필요하다.
-- SQS를 직접 호출하는 Pod나 KEDA SQS scaler가 있으면 `sqs` endpoint가 필요하다.
-- IRSA를 사용하는 Pod가 있으면 `sts` endpoint를 함께 두는 것이 NAT 의존도 감소에 유리하다.
+- Interface Endpoint는 서비스별로 AZ마다 ENI가 생성되어 시간 비용이 발생하므로, 호출량이 적은 서비스까지 기본값으로 넓히지는 않는다.
+- `monitoring`, `sqs`, `sts` endpoint는 기능 필수 요소가 아니며, 호출량 증가나 보안 요구가 커질 때 선택적으로 추가한다.
 - 팀 공통 태그 정책은 아직 합의 전이므로 이 모듈에는 공통 태그를 적용하지 않았다.
 - Public ALB 직접 접근 제한은 이 모듈만으로 완성되지 않는다. ALB Security Group, CloudFront prefix list, Listener Rule header 검증과 함께 설계해야 한다.
