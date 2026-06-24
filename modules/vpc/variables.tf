@@ -85,6 +85,18 @@ variable "single_nat_gateway" {
   default     = true
 }
 
+variable "interface_endpoint_services" {
+  description = "AWS regional service suffixes for interface VPC endpoints, for example ecr.api, ecr.dkr, and logs."
+  type        = set(string)
+  default     = []
+}
+
+variable "interface_endpoint_private_dns_enabled" {
+  description = "Whether to enable private DNS names for interface VPC endpoints."
+  type        = bool
+  default     = true
+}
+
 variable "eks_cluster_name" {
   description = "Optional EKS cluster name used for Kubernetes subnet discovery tags."
   type        = string

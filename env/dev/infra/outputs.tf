@@ -24,13 +24,33 @@ output "public_route_table_id" {
 }
 
 output "private_route_table_id" {
-  description = "ID of the first private route table."
+  description = "ID of the first private app route table."
   value       = module.vpc.private_route_table_id
 }
 
 output "private_route_table_ids" {
-  description = "IDs of private route tables."
+  description = "IDs of private app route tables."
   value       = module.vpc.private_route_table_ids
+}
+
+output "private_app_route_table_id" {
+  description = "ID of the first private app route table."
+  value       = module.vpc.private_app_route_table_id
+}
+
+output "private_app_route_table_ids" {
+  description = "IDs of private app route tables."
+  value       = module.vpc.private_app_route_table_ids
+}
+
+output "private_data_route_table_id" {
+  description = "ID of the first private data route table."
+  value       = module.vpc.private_data_route_table_id
+}
+
+output "private_data_route_table_ids" {
+  description = "IDs of private data route tables."
+  value       = module.vpc.private_data_route_table_ids
 }
 
 output "nat_gateway_id" {
@@ -41,6 +61,21 @@ output "nat_gateway_id" {
 output "internet_gateway_id" {
   description = "ID of the internet gateway."
   value       = module.vpc.internet_gateway_id
+}
+
+output "s3_gateway_endpoint_id" {
+  description = "ID of the S3 gateway VPC endpoint."
+  value       = module.vpc.s3_gateway_endpoint_id
+}
+
+output "interface_endpoint_ids" {
+  description = "Interface VPC endpoint IDs keyed by service suffix."
+  value       = module.vpc.interface_endpoint_ids
+}
+
+output "interface_endpoint_security_group_id" {
+  description = "Security group ID attached to interface VPC endpoints."
+  value       = module.vpc.interface_endpoint_security_group_id
 }
 
 output "eks_cluster_name" {
