@@ -161,12 +161,30 @@ resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
   tags = {
-    Name = "${local.name_prefix}-private-rt-${each.value.suffix}"
+    Name = "${local.name_prefix}-private-app-rt-${each.value.suffix}"
   }
 }
 
-resource "aws_route" "private_default" {
+resource "aws_route_table" "private_data" {
+  for_each = var.single_nat_gateway ? { "0" = local.public_subnets["0"] } : local.public_subnets
+
+  vpc_id = aws_vpc.this.id
+
+  tags = {
+    Name = "${local.name_prefix}-private-data-rt-${each.value.suffix}"
+  }
+}
+
+resource "aws_route" "private_app_default" {
   for_each = var.enable_nat_gateway ? aws_route_table.private : {}
+
+  route_table_id         = each.value.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.this[var.single_nat_gateway ? "0" : each.key].id
+}
+
+resource "aws_route" "private_data_default" {
+  for_each = var.enable_nat_gateway ? aws_route_table.private_data : {}
 
   route_table_id         = each.value.id
   destination_cidr_block = "0.0.0.0/0"
@@ -184,7 +202,7 @@ resource "aws_route_table_association" "private_data" {
   for_each = aws_subnet.private_data
 
   subnet_id      = each.value.id
-  route_table_id = aws_route_table.private[var.single_nat_gateway ? "0" : each.key].id
+  route_table_id = aws_route_table.private_data[var.single_nat_gateway ? "0" : each.key].id
 }
 
 data "aws_region" "current" {}
@@ -194,7 +212,10 @@ resource "aws_vpc_endpoint" "s3" {
   service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
   vpc_endpoint_type = "Gateway"
 
-  route_table_ids = [for key in sort(keys(aws_route_table.private)) : aws_route_table.private[key].id]
+  route_table_ids = concat(
+    [for key in sort(keys(aws_route_table.private)) : aws_route_table.private[key].id],
+    [for key in sort(keys(aws_route_table.private_data)) : aws_route_table.private_data[key].id]
+  )
 
   tags = {
     Name = "${local.name_prefix}-s3-gw"

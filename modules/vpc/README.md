@@ -14,7 +14,8 @@
 - NAT Gateway
 - Elastic IP for NAT Gateway
 - Public Route Table
-- Private Route Table
+- Private App Route Table
+- Private Data Route Table
 - Route Table Association
 - S3 Gateway VPC Endpoint
 - Interface VPC Endpoint
@@ -98,11 +99,17 @@ Public Subnet
 -> Internet
 ```
 
-Private app/data subnet은 NAT Gateway를 통해 외부로 나간다.
+Private app/data subnet은 각각 분리된 route table을 통해 외부로 나간다.
 
 ```text
-Private Subnet
--> Private Route Table
+Private App Subnet
+-> Private App Route Table
+-> NAT Gateway
+-> Internet Gateway
+-> Internet
+
+Private Data Subnet
+-> Private Data Route Table
 -> NAT Gateway
 -> Internet Gateway
 -> Internet
@@ -110,16 +117,20 @@ Private Subnet
 
 dev 기본값은 운영 전환을 고려해 `single_nat_gateway = false`이다.
 
-이 경우 public subnet이 있는 AZ마다 NAT Gateway를 1개씩 만들고, private app/data subnet은 같은 AZ의 private route table을 통해 같은 AZ의 NAT Gateway로 나간다.
+이 경우 public subnet이 있는 AZ마다 NAT Gateway를 1개씩 만들고, private app subnet과 private data subnet은 서로 다른 route table을 사용한다.
+
+각 route table의 기본 경로는 같은 AZ의 NAT Gateway를 바라본다.
 
 ```text
-Private App Subnet A -> Private Route Table A -> NAT Gateway A
-Private App Subnet C -> Private Route Table C -> NAT Gateway C
-Private Data Subnet A -> Private Route Table A -> NAT Gateway A
-Private Data Subnet C -> Private Route Table C -> NAT Gateway C
+Private App Subnet A -> Private App Route Table A -> NAT Gateway A
+Private App Subnet C -> Private App Route Table C -> NAT Gateway C
+Private Data Subnet A -> Private Data Route Table A -> NAT Gateway A
+Private Data Subnet C -> Private Data Route Table C -> NAT Gateway C
 ```
 
 이 구조는 NAT Gateway 장애 범위를 AZ 단위로 격리하고, 다른 AZ의 NAT Gateway를 경유하면서 발생할 수 있는 cross-AZ 데이터 처리 비용을 줄인다.
+
+또한 app 계층과 data 계층의 route table을 분리해 이후 DB subnet에 더 제한적인 라우팅 정책이나 endpoint 정책을 적용하기 쉬운 구조를 만든다.
 
 비용을 우선하는 임시 dev 환경에서는 `single_nat_gateway = true`로 되돌려 NAT Gateway를 1개만 사용할 수 있다.
 
@@ -196,8 +207,12 @@ EKS 클러스터 이름이 아직 정해지지 않았다면 빈 문자열로 두
 | `private_app_subnet_ids` | Private app subnet ID 목록 |
 | `private_data_subnet_ids` | Private data subnet ID 목록 |
 | `public_route_table_id` | Public route table ID |
-| `private_route_table_id` | 첫 번째 private route table ID |
-| `private_route_table_ids` | Private route table ID 목록 |
+| `private_route_table_id` | 첫 번째 private app route table ID |
+| `private_route_table_ids` | Private app route table ID 목록 |
+| `private_app_route_table_id` | 첫 번째 private app route table ID |
+| `private_app_route_table_ids` | Private app route table ID 목록 |
+| `private_data_route_table_id` | 첫 번째 private data route table ID |
+| `private_data_route_table_ids` | Private data route table ID 목록 |
 | `nat_gateway_id` | 첫 번째 NAT Gateway ID |
 | `nat_gateway_ids` | NAT Gateway ID 목록 |
 | `internet_gateway_id` | Internet Gateway ID |
