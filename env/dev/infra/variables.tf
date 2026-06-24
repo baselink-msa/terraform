@@ -85,6 +85,12 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "enable_kafka_event_streaming" {
+  description = "Whether to create the optional MSK Serverless event streaming backbone for analytics and capacity intelligence."
+  type        = bool
+  default     = false
+}
+
 variable "vpc_cidr" {
   description = "CIDR block for the VPC."
   type        = string
