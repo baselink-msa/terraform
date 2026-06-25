@@ -76,7 +76,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 
 ## 4. 현재 전체 구현 상태 요약
 
-마지막 업데이트: `2026-06-24`
+마지막 업데이트: `2026-06-25`
 
 | 영역 | 상태 | 요약 |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | Slack 알림 경로 확인, Python DB pool 전용 패널/알림은 모니터링 담당자 협업 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 2 준비 중 | MSK Serverless, IAM client smoke test, topic 5개 생성 완료. Backend Kafka config 주입 PR 준비 완료 |
+| Kafka/MSK 개인 프로젝트 | Phase 2 일부 완료 | MSK Serverless, IAM client smoke test, topic 5개 생성, backend Kafka config 주입과 Pod 환경변수 검증 완료 |
 | 발표 문서 | 진행 중 | DR/Backup/Outbox/Kafka 문서가 있으며 최종 발표용 캡처와 요약 보강 필요 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -234,6 +234,9 @@ Kafka 도입 목적:
 - EKS 내부 Kafka CLI `AWS_MSK_IAM` client smoke test 성공
 - backend runtime IRSA topic bootstrap 권한 추가
 - Kafka topic 5개 생성 및 목록 조회 성공
+- Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수 주입 완료
+- GitOps backend Deployment에 `backend-config` Reloader annotation 적용 완료
+- backend Pod rolling restart 후 `ticket-service`, `ticket-worker-service`, `waiting-room-service`에서 Kafka 환경변수 확인 완료
 
 현재 확인된 bootstrap broker:
 
@@ -252,6 +255,7 @@ arn:aws:kafka:ap-northeast-2:740831361032:cluster/baselink-dev-event-streaming/5
 - MSK Serverless는 실제 비용이 발생할 수 있다.
 - Kafka topic은 생성 완료했다.
 - Backend producer와 Kafka dual publish는 아직 구현하지 않았다.
+- ConfigMap 값은 Pod 시작 시점에 env로 주입되므로, ConfigMap 변경과 Reloader annotation 적용 순서가 엇갈린 경우에는 1회 rolling restart가 필요할 수 있다.
 
 참고 문서:
 
@@ -278,13 +282,14 @@ Phase 1+ 완료
 -> EKS 내부 네트워크 접근 검증
 -> AWS_MSK_IAM client smoke test 검증
 -> Kafka topic 5개 생성과 목록 조회 검증
+-> Backend/GitOps Kafka config 주입
+-> backend Pod Kafka 환경변수 검증
 ```
 
 다음 단계:
 
 ```text
 Phase 2 준비
--> Backend/GitOps Kafka config 주입
 -> Outbox publisher dual publish
 ```
 
@@ -327,7 +332,7 @@ ticket.domain.events
 waiting.operational.events
 ```
 
-### 진행 중: Backend/GitOps Kafka config 주입
+### 완료: Backend/GitOps Kafka config 주입
 
 목표:
 
@@ -335,14 +340,14 @@ waiting.operational.events
 - GitOps Deployment가 `backend-config` 변경을 감지해 rolling restart되도록 Reloader annotation을 보강한다.
 - Backend producer 코드가 들어가기 전에 공통 환경변수 이름을 고정한다.
 
-준비한 PR:
+적용한 PR:
 
 ```text
 Terraform: feat/kafka-backend-config
 GitOps:    feat/backend-config-reloader
 ```
 
-추가 예정 환경변수:
+추가 완료 환경변수:
 
 ```text
 KAFKA_ENABLED=true
@@ -356,17 +361,21 @@ KAFKA_TOPIC_CAPACITY_SIGNALS=capacity.signals
 KAFKA_TOPIC_INFRA_AUDIT_EVENTS=infra.audit.events
 ```
 
-주의:
+검증 결과:
 
-- Terraform PR merge와 Apply Dev가 먼저 필요하다.
-- 그 다음 GitOps PR을 merge해 Reloader annotation을 반영한다.
-- ConfigMap 환경변수는 Pod 시작 시점에 주입되므로, configmap Reloader annotation이 있어야 기존 Pod도 새 값을 받는다.
+- Terraform Apply Dev 성공
+- GitOps `backend-config` Reloader annotation 반영
+- 전체 backend Deployment Ready 상태 확인
+- `ticket-service`, `ticket-worker-service`, `waiting-room-service`에서 `KAFKA_*` 환경변수 확인
+- ConfigMap 변경 후 이미 떠 있던 Pod는 env가 자동 갱신되지 않으므로, 2026-06-25에 backend Deployment 9개를 1회 rolling restart해 최신 `backend-config`를 반영했다.
 
-완료 후 검증:
+검증 명령:
 
 ```bash
 kubectl get configmap backend-config -n baselink-dev -o yaml
-kubectl exec -n baselink-dev deploy/ticket-service -- printenv | grep KAFKA
+kubectl exec -n baselink-dev deploy/ticket-service -- sh -c "env | sort | grep KAFKA"
+kubectl exec -n baselink-dev deploy/ticket-worker-service -- sh -c "env | sort | grep KAFKA"
+kubectl exec -n baselink-dev deploy/waiting-room-service -- sh -c "env | sort | grep KAFKA"
 ```
 
 ### P0 다음: ticket outbox publisher dual publish
@@ -466,7 +475,7 @@ Kafka는 이벤트 스트리밍/분석 경로다.
 ```text
 terraform/docs/project-continuity-handoff.md를 먼저 읽고 현재 작업 맥락을 복구해줘.
 나는 Baselink 프로젝트에서 데이터 안정성/DR/비동기 처리/Kafka 이벤트 스트리밍 파트를 담당하고 있어.
-현재 Kafka/MSK Serverless Phase 1과 Kafka topic bootstrap은 완료됐고, 다음 작업은 Backend/GitOps Kafka config 주입부터 이어가면 돼.
+현재 Kafka/MSK Serverless Phase 1, Kafka topic bootstrap, Backend/GitOps Kafka config 주입과 Pod 환경변수 검증까지 완료됐고, 다음 작업은 ticket-service Outbox publisher dual publish부터 이어가면 돼.
 작업 후에는 항상 왜 이 작업을 했는지와 어떤 결과를 얻는지 쉽게 설명해줘.
 PR 생성은 내가 할 테니 commit/push까지만 해줘.
 ```
