@@ -163,7 +163,9 @@ Partition key:
 - EKS 내부 network smoke test 완료
 - EKS 내부 Kafka CLI `AWS_MSK_IAM` client smoke test 완료
 - 2026-06-25 기준 Kafka topic 5개 생성과 목록 조회 검증 완료
-- 아직 서비스 producer 연동은 진행하지 않음
+- 2026-06-25 기준 backend runtime `backend-config`에 Kafka 환경변수 주입 완료
+- 2026-06-25 기준 backend Pod에서 Kafka 환경변수 확인 완료
+- 아직 서비스 producer dual publish 구현은 진행하지 않음
 
 생성 완료 topic:
 
@@ -179,18 +181,26 @@ infra.audit.events
 
 기존 SQS 경로는 유지합니다.
 
-- Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수를 주입합니다.
-- GitOps Deployment에 `backend-config` Reloader annotation을 추가해 ConfigMap 변경 시 Pod가 새 환경변수를 받게 합니다.
+- Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수를 주입합니다. `2026-06-25 완료`
+- GitOps Deployment에 `backend-config` Reloader annotation을 추가해 ConfigMap 변경 시 Pod가 새 환경변수를 받게 합니다. `2026-06-25 완료`
 - waiting-room-service 이벤트를 SQS와 Kafka에 dual publish
 - ticket-service Outbox publisher도 domain event를 SQS와 Kafka에 dual publish
 - Kafka publish 실패는 핵심 요청을 실패시키지 않습니다.
 
 완료 조건:
 
-- backend Pod에서 Kafka 환경변수 확인
+- backend Pod에서 Kafka 환경변수 확인 `완료`
 - SQS 기존 이벤트 파이프라인 정상
 - Kafka topic에도 동일 envelope 적재
 - producer 실패 metric 확인
+
+검증 기록:
+
+- Terraform Apply Dev 성공
+- GitOps backend Deployment에 `configmap.reloader.stakater.com/reload: "backend-config"` annotation 반영
+- 전체 backend Deployment Ready 상태 확인
+- `ticket-service`, `ticket-worker-service`, `waiting-room-service`에서 `KAFKA_*` 환경변수 확인
+- ConfigMap 환경변수는 Pod 시작 시점에 주입되므로, 기존 Pod까지 최신 값을 받도록 backend Deployment 9개를 1회 rolling restart했다.
 
 ### Phase 3: Kafka to S3 sink
 
