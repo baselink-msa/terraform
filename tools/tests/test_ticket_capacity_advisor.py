@@ -24,6 +24,7 @@ class CapacityAdvisorTest(unittest.TestCase):
             "average_effective_enter_per_minute": 40.0,
             "current_db_connections": 20,
             "producer_filter": None,
+            "producer_filters": (),
         }
         values.update(overrides)
         return advisor.CapacityInputs(**values)
@@ -75,6 +76,16 @@ class CapacityAdvisorTest(unittest.TestCase):
         )
 
         self.assertEqual(50, report["recommendedPolicyEnterPerMinute"])
+
+    def test_report_contains_multi_producer_filter(self):
+        report = advisor.calculate_recommendation(
+            self.inputs(producer_filters=("ticket-service", "waiting-room-service"))
+        )
+
+        self.assertEqual(
+            ["ticket-service", "waiting-room-service"],
+            report["producerFilters"],
+        )
 
 
 if __name__ == "__main__":

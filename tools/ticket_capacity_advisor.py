@@ -26,6 +26,7 @@ class CapacityInputs:
     current_db_connections: int
     db_connection_budget: int = 60
     producer_filter: str | None = None
+    producer_filters: tuple[str, ...] = ()
 
 
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
@@ -63,6 +64,7 @@ def calculate_recommendation(
         "gameId": inputs.game_id,
         "lookbackDays": inputs.lookback_days,
         "producerFilter": inputs.producer_filter,
+        "producerFilters": list(inputs.producer_filters),
         "currentPolicyEnterPerMinute": inputs.current_policy_enter_per_minute,
         "currentDbConnections": inputs.current_db_connections,
         "dbConnectionBudget": inputs.db_connection_budget,
@@ -226,13 +228,19 @@ def collect_athena_inputs(
     workgroup: str,
     region: str,
     producer_filter: str | None = None,
+    producer_filters: tuple[str, ...] = (),
 ) -> CapacityInputs:
     start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
-    producer_condition = (
-        "AND producer = '" + producer_filter.replace("'", "''") + "'"
-        if producer_filter
-        else ""
-    )
+    if producer_filter and producer_filters:
+        raise ValueError("Use either producer_filter or producer_filters, not both")
+
+    producer_condition = ""
+    if producer_filter:
+        producer_condition = "AND producer = '" + producer_filter.replace("'", "''") + "'"
+    elif producer_filters:
+        escaped = [producer.replace("'", "''") for producer in producer_filters]
+        quoted = ", ".join(f"'{producer}'" for producer in escaped)
+        producer_condition = f"AND producer IN ({quoted})"
     query = f"""
     WITH base AS (
       SELECT *
@@ -277,6 +285,7 @@ def collect_athena_inputs(
         average_effective_enter_per_minute=float(values[6] or 0),
         current_db_connections=current_db_connections,
         producer_filter=producer_filter,
+        producer_filters=producer_filters,
     )
 
 
@@ -314,9 +323,19 @@ def main() -> None:
         "--producer-filter",
         help="Only analyze events from this producer, for example capacity-load-test.",
     )
+    parser.add_argument(
+        "--producer-in",
+        help=(
+            "Comma-separated producers to analyze together, "
+            "for example ticket-service,waiting-room-service."
+        ),
+    )
     parser.add_argument("--output-dir", default="capacity-reports")
     args = parser.parse_args()
 
+    producer_filters = tuple(
+        item.strip() for item in (args.producer_in or "").split(",") if item.strip()
+    )
     inputs = collect_athena_inputs(
         args.game_id,
         args.lookback_days,
@@ -326,6 +345,7 @@ def main() -> None:
         args.workgroup,
         args.region,
         args.producer_filter,
+        producer_filters,
     )
     report = calculate_recommendation(inputs, args.minimum_samples)
     output_dir = Path(args.output_dir)
