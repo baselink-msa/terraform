@@ -104,6 +104,15 @@ resource "aws_iam_role_policy" "backend_runtime_kafka" {
         Resource = local.kafka_group_arns
       },
       {
+        Sid    = "ReadKafkaEvents"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:ReadData"
+        ]
+        Resource = local.kafka_topic_arns
+      },
+      {
         Sid    = "ReadKafkaRuntimeConfig"
         Effect = "Allow"
         Action = [
