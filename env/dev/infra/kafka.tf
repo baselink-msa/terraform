@@ -85,6 +85,14 @@ resource "aws_iam_role_policy" "backend_runtime_kafka" {
         Resource = local.kafka_topic_arns
       },
       {
+        Sid    = "ProduceKafkaEventsIdempotently"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:WriteDataIdempotently"
+        ]
+        Resource = module.kafka_event_streaming.cluster_arn
+      },
+      {
         Sid    = "BootstrapKafkaTopics"
         Effect = "Allow"
         Action = [
