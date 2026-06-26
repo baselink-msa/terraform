@@ -165,7 +165,8 @@ Partition key:
 - 2026-06-25 기준 Kafka topic 5개 생성과 목록 조회 검증 완료
 - 2026-06-25 기준 backend runtime `backend-config`에 Kafka 환경변수 주입 완료
 - 2026-06-25 기준 backend Pod에서 Kafka 환경변수 확인 완료
-- 아직 서비스 producer dual publish 구현은 진행하지 않음
+- 2026-06-26 기준 `ticket-service` Outbox domain event dual publish 구현 및 dev 검증 완료
+- 아직 `waiting-room-service` Kafka publish와 Kafka→S3 sink는 진행하지 않음
 
 생성 완료 topic:
 
@@ -184,15 +185,15 @@ infra.audit.events
 - Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수를 주입합니다. `2026-06-25 완료`
 - GitOps Deployment에 `backend-config` Reloader annotation을 추가해 ConfigMap 변경 시 Pod가 새 환경변수를 받게 합니다. `2026-06-25 완료`
 - waiting-room-service 이벤트를 SQS와 Kafka에 dual publish
-- ticket-service Outbox publisher도 domain event를 SQS와 Kafka에 dual publish
+- ticket-service Outbox publisher도 domain event를 SQS와 Kafka에 dual publish `2026-06-26 완료`
 - Kafka publish 실패는 핵심 요청을 실패시키지 않습니다.
 
 완료 조건:
 
 - backend Pod에서 Kafka 환경변수 확인 `완료`
-- SQS 기존 이벤트 파이프라인 정상
-- Kafka topic에도 동일 envelope 적재
-- producer 실패 metric 확인
+- SQS 기존 이벤트 파이프라인 정상 `ticket-service Outbox 기준 완료`
+- Kafka topic에도 동일 envelope 적재 `ticket.domain.events 완료`
+- producer 성공/실패 metric 확인 `ticket_kafka_publish_total 확인`
 
 검증 기록:
 
@@ -201,6 +202,11 @@ infra.audit.events
 - 전체 backend Deployment Ready 상태 확인
 - `ticket-service`, `ticket-worker-service`, `waiting-room-service`에서 `KAFKA_*` 환경변수 확인
 - ConfigMap 환경변수는 Pod 시작 시점에 주입되므로, 기존 Pod까지 최신 값을 받도록 backend Deployment 9개를 1회 rolling restart했다.
+- `ticket-service` image `f67032bb2c2b1b9d0e282ad7a3a1b10e301edbad` 배포 후 내부 API로 예약 요청을 생성했다.
+- Kafka `ticket.domain.events`에서 `reservationId=4715`, `eventType=RESERVATION_REQUESTED`, `producer=ticket-service` 이벤트를 consume해 확인했다.
+- MSK IAM 트러블슈팅:
+  - consumer 검증에는 topic `ReadData` 권한과 `baselink-*` group 권한이 필요했다.
+  - idempotent Kafka producer에는 cluster-level `WriteDataIdempotently` 권한이 필요했다.
 
 ### Phase 3: Kafka to S3 sink
 

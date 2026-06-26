@@ -76,7 +76,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 
 ## 4. 현재 전체 구현 상태 요약
 
-마지막 업데이트: `2026-06-25`
+마지막 업데이트: `2026-06-26`
 
 | 영역 | 상태 | 요약 |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | Slack 알림 경로 확인, Python DB pool 전용 패널/알림은 모니터링 담당자 협업 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 2 일부 완료 | MSK Serverless, IAM client smoke test, topic 5개 생성, backend Kafka config 주입과 Pod 환경변수 검증 완료 |
+| Kafka/MSK 개인 프로젝트 | Phase 2 핵심 완료 | MSK Serverless, topic 5개 생성, backend Kafka config 주입, ticket-service Outbox→Kafka dual publish 검증 완료 |
 | 발표 문서 | 진행 중 | DR/Backup/Outbox/Kafka 문서가 있으며 최종 발표용 캡처와 요약 보강 필요 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -237,6 +237,8 @@ Kafka 도입 목적:
 - Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수 주입 완료
 - GitOps backend Deployment에 `backend-config` Reloader annotation 적용 완료
 - backend Pod rolling restart 후 `ticket-service`, `ticket-worker-service`, `waiting-room-service`에서 Kafka 환경변수 확인 완료
+- `ticket-service` Outbox publisher가 `DOMAIN_EVENTS`를 기존 SQS와 Kafka `ticket.domain.events`에 dual publish하도록 구현 완료
+- dev 환경에서 `RESERVATION_REQUESTED` 이벤트를 Kafka topic에서 직접 consume해 검증 완료
 
 현재 확인된 bootstrap broker:
 
@@ -254,7 +256,8 @@ arn:aws:kafka:ap-northeast-2:740831361032:cluster/baselink-dev-event-streaming/5
 
 - MSK Serverless는 실제 비용이 발생할 수 있다.
 - Kafka topic은 생성 완료했다.
-- Backend producer와 Kafka dual publish는 아직 구현하지 않았다.
+- `ticket-service` domain event dual publish는 검증 완료했다.
+- `waiting-room-service` Kafka publish와 Kafka→S3 sink는 아직 구현하지 않았다.
 - ConfigMap 값은 Pod 시작 시점에 env로 주입되므로, ConfigMap 변경과 Reloader annotation 적용 순서가 엇갈린 경우에는 1회 rolling restart가 필요할 수 있다.
 
 참고 문서:
@@ -284,13 +287,15 @@ Phase 1+ 완료
 -> Kafka topic 5개 생성과 목록 조회 검증
 -> Backend/GitOps Kafka config 주입
 -> backend Pod Kafka 환경변수 검증
+-> ticket-service Outbox domain event Kafka dual publish 검증
 ```
 
 다음 단계:
 
 ```text
 Phase 2 준비
--> Outbox publisher dual publish
+-> waiting-room-service Kafka publish
+-> Kafka to S3/Athena sink
 ```
 
 ## 7. 남은 작업 우선순위
@@ -378,23 +383,7 @@ kubectl exec -n baselink-dev deploy/ticket-worker-service -- sh -c "env | sort |
 kubectl exec -n baselink-dev deploy/waiting-room-service -- sh -c "env | sort | grep KAFKA"
 ```
 
-### P0 다음: ticket outbox publisher dual publish
-
-목표:
-
-- Backend 서비스가 Kafka bootstrap broker와 topic 목록을 사용할 수 있게 한다.
-
-선택지:
-
-1. GitOps Secret/ConfigMap으로 주입
-2. External Secrets로 Secrets Manager 값을 Kubernetes Secret에 동기화
-3. 서비스가 AWS SDK로 Secrets Manager를 직접 조회
-
-추천:
-
-- 발표와 운영 명확성을 위해 External Secrets 또는 GitOps Secret 동기화 방식이 좋다.
-
-### P1: ticket outbox publisher dual publish
+### 완료: ticket-service Outbox publisher dual publish
 
 목표:
 
@@ -408,6 +397,38 @@ kubectl exec -n baselink-dev deploy/waiting-room-service -- sh -c "env | sort | 
 SQS는 안정 처리 경로,
 Kafka는 이벤트 스트리밍/분석 경로다.
 ```
+
+구현 결과:
+
+- Backend PR `feat/ticket-outbox-kafka-dual-publish` merge 완료
+- `ticket-service` image `f67032bb2c2b1b9d0e282ad7a3a1b10e301edbad` dev 배포 완료
+- `DOMAIN_EVENTS` 목적지 Outbox event만 Kafka `ticket.domain.events`에 보조 발행
+- `TICKET_CONFIRM` 명령 이벤트는 기존 SQS `ticket-confirm-queue` 경로 유지
+- Kafka 실패는 `ticket_kafka_publish_total{result="failure"}` metric과 log로 남기고 Outbox 자체는 SQS 성공 기준으로 `PUBLISHED` 처리
+
+검증 결과:
+
+```text
+reservationId=4715
+eventType=RESERVATION_REQUESTED
+topic=ticket.domain.events
+producer=ticket-service
+```
+
+Kafka consume 결과:
+
+```json
+{"gameId": 1, "eventId": "e9104823-50a2-4cca-b9bb-f63dc268f45a", "payload": {"seatId": 1783270886, "status": "PENDING", "reservationId": 4715}, "traceId": null, "userKey": null, "producer": "ticket-service", "eventType": "RESERVATION_REQUESTED", "occurredAt": "2026-06-26T02:28:09.689020218Z", "aggregateId": "4715", "aggregateType": "RESERVATION", "schemaVersion": 1}
+```
+
+트러블슈팅 기록:
+
+- consumer smoke test 중 `GroupAuthorizationException` 발생
+  - 원인: consumer group 권한은 있었지만 topic `ReadData` 권한이 부족했다.
+  - 조치: `kafka-cluster:ReadData`, `DescribeTopic`을 topic ARN에 추가했다.
+- producer smoke test 중 `ClusterAuthorizationException` 발생
+  - 원인: Spring Kafka producer가 `enable.idempotence=true`로 동작하면서 cluster-level `WriteDataIdempotently` 권한이 필요했다.
+  - 조치: `kafka-cluster:WriteDataIdempotently`를 MSK cluster ARN에 추가했다.
 
 ### P2: waiting-room-service 이벤트 publish
 
