@@ -438,3 +438,144 @@ python tools/ticket_capacity_advisor.py `
   --minimum-samples 20 `
   --producer-in ticket-service,waiting-room-service
 ```
+
+## 11. 2026-06-27 update: minimum-samples 20 기준 검증 결과
+
+표본 확대용 flow runner를 사용해 `gameId=9001` 기준 실제 서비스 흐름 20건을 추가 생성했다.
+
+실행 명령:
+
+```powershell
+python tools/run_kafka_capacity_flow.py `
+  --samples 20 `
+  --game-id 9001 `
+  --issue-token-max-attempts 20 `
+  --issue-token-retry-delay-seconds 5
+```
+
+실행 결과:
+
+```json
+{
+  "samplesRequested": 20,
+  "succeeded": 20,
+  "failed": 0
+}
+```
+
+생성된 예약 범위:
+
+```text
+reservationId = 4718 ~ 4737
+status = CONFIRMED
+```
+
+이후 Kafka sink runner로 topic 이벤트를 S3에 적재했다.
+
+```powershell
+python tools/kafka_s3_sink.py `
+  --consume `
+  --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --topics ticket.domain.events `
+  --producer-in ticket-service
+
+python tools/kafka_s3_sink.py `
+  --consume `
+  --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --topics waiting.operational.events `
+  --producer-in waiting-room-service
+```
+
+S3 적재 결과:
+
+```text
+ticket.domain.events:
+accepted = 45
+written = 45
+
+waiting.operational.events:
+accepted = 49
+written = 49
+```
+
+`accepted` 수가 20보다 큰 이유는 sink runner가 topic을 처음부터 읽어 이전 검증 이벤트도 함께 다시 처리했기 때문이다. S3 object key는 `eventId` 기반이므로 같은 이벤트는 같은 위치에 덮어써져 idempotent하게 처리된다.
+
+S3에서 `game_id=9001` 기준 객체 수를 확인했다.
+
+```text
+Count = 84
+```
+
+이는 다음과 일치한다.
+
+```text
+4 event types x 21 samples = 84 objects
+```
+
+21건인 이유는 2026-06-27에 먼저 수행한 smoke test 1건과 이후 표본 확대 20건이 함께 포함되었기 때문이다.
+
+Capacity Advisor 실행:
+
+```powershell
+python tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 19 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service
+```
+
+Advisor 입력 집계:
+
+```json
+{
+  "waiting_entered": 21,
+  "access_tokens_issued": 21,
+  "reservation_requested": 21,
+  "reservation_confirmed": 21,
+  "stable_confirmed_per_minute": 1.0,
+  "average_waiting_seconds": 11.29,
+  "average_effective_enter_per_minute": 40.0,
+  "current_db_connections": 19
+}
+```
+
+Advisor 결과:
+
+```json
+{
+  "status": "RECOMMENDED",
+  "confidence": "MEDIUM",
+  "recommendedPolicyEnterPerMinute": 1,
+  "effectiveEnterPerMinuteNow": 1,
+  "dbPressureLevel": "NORMAL",
+  "dbThrottlePercent": 100
+}
+```
+
+추천값이 `1`로 나온 이유:
+
+- 표본은 충분해졌지만 안정 구간의 예약 확정 처리량이 분당 1건으로 관측되었다.
+- 예약 요청 대비 확정률은 100%였지만, 실제 처리량 기준 capacity가 낮게 측정되었다.
+- Advisor는 안전계수 `0.8`을 적용한다.
+- 현재 정책은 40명/분이지만, 관측된 처리량이 낮기 때문에 안전한 추천값을 1명/분으로 제시했다.
+- 현재 DB 상태는 `NORMAL`이므로 실시간 감속률은 100%이다.
+
+이번 검증의 의미:
+
+- 최소 표본 1건 기반 검증을 넘어 `minimum-samples=20` 기준으로도 Advisor가 실행되었다.
+- Kafka 이벤트 4종이 모두 20건 이상 확보되었다.
+- Kafka → S3 → Athena → Capacity Advisor 흐름이 더 현실적인 표본 수로 검증되었다.
+- 추천값이 무조건 증가하지 않고, 실제 처리량이 낮으면 보수적으로 낮은 값을 제안한다는 점을 확인했다.
+
+발표 메시지:
+
+```text
+표본을 20건 이상 확보한 뒤에도 Capacity Advisor는 현재 정책을 무조건 높이지 않았습니다.
+Kafka/Athena에서 관측한 실제 예약 확정 처리량이 낮았기 때문에,
+안전계수와 DB 상태를 반영해 1명/분을 추천했습니다.
+즉, 이 기능은 자동 증설 버튼이 아니라 운영자가 검토할 수 있는 보수적 의사결정 근거를 제공합니다.
+```
