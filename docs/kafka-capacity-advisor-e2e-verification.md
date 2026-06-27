@@ -364,3 +364,77 @@ Kafka를 단순 메시지 브로커로 추가한 것이 아니라,
 - Kafka sink를 수동 runner에서 상시 consumer 또는 Kafka Connect S3 Sink로 확장
 - `reservation.lifecycle.events`, `capacity.signals` topic까지 활용 범위 확장
 - 발표용 캡처 수집: Kafka consume, S3 partition, Athena 결과, Advisor markdown 보고서
+
+## 10. 2026-06-27 update: 표본 확대용 flow runner
+
+최소 E2E 검증 이후, 수동 API 호출을 반복하지 않고 표본을 만들 수 있도록 `tools/run_kafka_capacity_flow.py`를 추가했다.
+
+이 runner는 Kafka나 S3에 직접 이벤트를 넣지 않는다. 실제 dev 서비스 API를 호출해 backend 서비스가 자연스럽게 이벤트를 발행하게 만든다.
+
+실행 흐름:
+
+```text
+waiting-room-service enter
+-> waiting-room-service issue-token
+-> ticket-service reserve
+-> ticket-service confirm
+```
+
+기본 game id는 `9001`이다.
+
+이유:
+
+- 실제 game 1 대기열에는 이전 테스트 사용자가 남아 있을 수 있다.
+- 이 경우 새 사용자의 rank가 뒤로 밀려 `issue-token`이 계속 실패할 수 있다.
+- 표본 생성용 game id를 분리하면 깨끗한 Redis queue에서 더 안정적으로 시나리오를 반복할 수 있다.
+- `ticket_schema.reservations.game_id`에는 foreign key가 없으므로 표본용 game id로 예약 이벤트 생성이 가능하다.
+
+1건 smoke test 결과:
+
+```json
+{
+  "index": 0,
+  "user_id": 2742560957,
+  "seat_id": 3682560957,
+  "status": "CONFIRMED",
+  "reservation_id": 4717
+}
+```
+
+실행 로그:
+
+```text
+enter result: position=1 canEnter=True effectiveEnterPerMinute=40
+issue token succeeded
+reservation requested: reservationId=4717
+reservation confirmed: reservationId=4717
+```
+
+표본 확대 예시:
+
+```powershell
+python tools/run_kafka_capacity_flow.py `
+  --samples 20 `
+  --game-id 9001 `
+  --issue-token-max-attempts 20 `
+  --issue-token-retry-delay-seconds 5
+```
+
+표본 생성 후에는 기존 Kafka sink와 Capacity Advisor를 같은 game id로 실행한다.
+
+```powershell
+python tools/kafka_s3_sink.py `
+  --consume `
+  --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --topics ticket.domain.events waiting.operational.events `
+  --producer-in ticket-service,waiting-room-service
+
+python tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 19 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service
+```
