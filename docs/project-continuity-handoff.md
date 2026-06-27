@@ -663,3 +663,27 @@ docs/load-test-validation-plan.md
 terraform/docs/load-test-validation-plan.md
 ansible/docs/capacity-advisor-loadtest-verification.md
 ```
+
+## 14. 2026-06-28 발표/PPT 초안 업데이트
+
+팀 발표 자료는 각자 담당 파트를 PPT로 만든 뒤 합치는 방향이다.
+
+Data & Async / Reliability / DR / Kafka 개인 프로젝트 담당 파트의 발표 구성을 아래 문서로 정리했다.
+
+```text
+docs/my-part-presentation-outline.md
+```
+
+이 문서에는 다음 내용이 포함되어 있다.
+
+- 내 담당 파트 한 문장 요약
+- 발표 핵심 메시지
+- 전체 아키텍처 설명 흐름
+- 10장 기준 PPT 슬라이드 구성
+- 6장 축약 버전
+- 캡처 후보 목록
+- 멘토 설명용 3분 버전
+- 예상 질문과 답변
+- 최종 한 장 요약 문장
+
+다음에 PPT 파일을 만들 때는 이 문서를 기준으로 슬라이드 원고를 옮기고, AWS 콘솔/코드/검증 결과 캡처를 붙이면 된다.
