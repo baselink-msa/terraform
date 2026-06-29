@@ -212,8 +212,8 @@ python tools/kafka_s3_sink.py `
   --consume `
   --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
   --bucket baselink-dev-ticket-events-740831361032 `
-  --topics ticket.domain.events waiting.operational.events capacity.signals `
-  --producer-in ticket-service,waiting-room-service
+  --topics ticket.domain.events waiting.operational.events reservation.lifecycle.events capacity.signals `
+  --producer-in ticket-service,waiting-room-service,seat-lock-service
 ```
 
 이 runner는 발표와 dev 검증용 bounded consumer입니다. 운영 상시 sink가 필요해지면 같은 S3 partition 규칙을 유지한 채 Lambda MSK trigger, Kafka Connect S3 Sink, 또는 전용 consumer Deployment로 확장합니다.
@@ -254,8 +254,8 @@ python tools/kafka_s3_sink.py `
   --consume `
   --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
   --bucket baselink-dev-ticket-events-740831361032 `
-  --topics ticket.domain.events waiting.operational.events `
-  --producer-in ticket-service,waiting-room-service
+  --topics ticket.domain.events waiting.operational.events reservation.lifecycle.events `
+  --producer-in ticket-service,waiting-room-service,seat-lock-service
 ```
 
 그 다음 Advisor를 더 현실적인 최소 표본 기준으로 실행합니다.
