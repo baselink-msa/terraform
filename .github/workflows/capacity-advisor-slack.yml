@@ -61,6 +61,22 @@ jobs:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve Python command
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if command -v python3 >/dev/null 2>&1; then
+            echo "PYTHON_BIN=python3" >> "$GITHUB_ENV"
+            python3 --version
+          elif command -v python >/dev/null 2>&1; then
+            echo "PYTHON_BIN=python" >> "$GITHUB_ENV"
+            python --version
+          else
+            echo "::error::Python is required on the self-hosted runner. Install python3 or add python to PATH."
+            exit 127
+          fi
+
       - name: Resolve report parameters
         shell: bash
         run: |
@@ -125,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          python tools/ticket_capacity_advisor.py \
+          "${PYTHON_BIN}" tools/ticket_capacity_advisor.py \
             --game-id "${GAME_ID}" \
             --current-policy "${CURRENT_POLICY}" \
             --current-db-connections "${CURRENT_DB_CONNECTIONS}" \
@@ -160,14 +176,14 @@ jobs:
 
           if [ -z "${CAPACITY_ADVISOR_SLACK_WEBHOOK_URL}" ]; then
             echo "::warning::CAPACITY_ADVISOR_SLACK_WEBHOOK_URL is not configured. Printing dry-run payload."
-            python tools/slack_capacity_advisor_notify.py \
+            "${PYTHON_BIN}" tools/slack_capacity_advisor_notify.py \
               --report-json "${report_json}" \
               --report-url "${run_url}" \
               --dry-run
             exit 0
           fi
 
-          python tools/slack_capacity_advisor_notify.py \
+          "${PYTHON_BIN}" tools/slack_capacity_advisor_notify.py \
             --report-json "${report_json}" \
             --report-url "${run_url}"
 
