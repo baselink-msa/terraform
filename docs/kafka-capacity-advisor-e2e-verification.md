@@ -1165,6 +1165,13 @@ occurred_before: 2026-06-29T09:36:00Z
 | DB 상태 | `NORMAL (19/60)` |
 | Kafka pipeline | `HEALTHY`, events `360` |
 
+Slack Report 수동 실행 검증:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28365901166`
+- generatedAt: `2026-06-29T10:35:56.087184+00:00`
+- Slack 메시지에 분석 시간 범위 `2026-06-29T09:30:00Z ~ 2026-06-29T09:36:00Z`가 표시되었다.
+- Slack 메시지에 추천 정책 `21명/분`, 현재 DB 반영 입장량 `21명/분`, 원시 추천 `21.6명/분`, 운영 하한 `20명/분`이 표시되었다.
+
 의미:
 
 - 하루치 전체 분석에서 안정 확정 처리량이 2건/분으로 낮게 보인 것은 smoke/순차 표본이 섞였기 때문이다.
