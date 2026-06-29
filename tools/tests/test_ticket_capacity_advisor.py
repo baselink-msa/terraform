@@ -125,6 +125,59 @@ class CapacityAdvisorTest(unittest.TestCase):
             report["producerFilters"],
         )
 
+    def test_report_contains_analysis_window_when_time_range_is_set(self):
+        report = advisor.calculate_recommendation(
+            self.inputs(
+                occurred_after="2026-06-29T09:24:00Z",
+                occurred_before="2026-06-29T09:34:00Z",
+            )
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual(
+            "2026-06-29T09:24:00Z",
+            report["analysisWindow"]["occurredAfter"],
+        )
+        self.assertIn("분석 시간 범위", markdown)
+        self.assertIn("2026-06-29T09:34:00Z", markdown)
+
+    def test_collect_athena_inputs_filters_by_occurred_at_range(self):
+        original_run = advisor._run_athena_query
+        captured = {}
+
+        def fake_run(query, database, workgroup, region):
+            captured["query"] = query
+            return ["10", "9", "8", "7", "2.0", "3.0", "40.0"]
+
+        advisor._run_athena_query = fake_run
+        try:
+            inputs = advisor.collect_athena_inputs(
+                9001,
+                1,
+                40,
+                19,
+                "db",
+                "wg",
+                "ap-northeast-2",
+                producer_filters=("ticket-service", "waiting-room-service"),
+                occurred_after="2026-06-29T18:24:00+09:00",
+                occurred_before="2026-06-29T18:34:00+09:00",
+            )
+        finally:
+            advisor._run_athena_query = original_run
+
+        self.assertEqual("2026-06-29T09:24:00Z", inputs.occurred_after)
+        self.assertEqual("2026-06-29T09:34:00Z", inputs.occurred_before)
+        self.assertIn("event_date >= '2026-06-29'", captured["query"])
+        self.assertIn(
+            "from_iso8601_timestamp(occurredAt) >= from_iso8601_timestamp('2026-06-29T09:24:00Z')",
+            captured["query"],
+        )
+        self.assertIn(
+            "from_iso8601_timestamp(occurredAt) < from_iso8601_timestamp('2026-06-29T09:34:00Z')",
+            captured["query"],
+        )
+
     def test_report_includes_capacity_signal_summary(self):
         signals = advisor.CapacitySignalSummary(
             throttle_applied=2,

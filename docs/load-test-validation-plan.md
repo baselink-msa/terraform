@@ -465,7 +465,66 @@ DB 상태 NORMAL이므로 effectiveEnterPerMinuteNow = 20명/분
 
 즉, v2는 관측 처리량이 낮다는 사실은 숨기지 않고 `rawRecommendedPolicyEnterPerMinute=1.6`으로 보여주되, 실제 운영 추천값은 사용자 경험을 고려해 20명/분으로 보정한다.
 
-### 9.6 최종 판단
+Slack Report 재검증:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28364753080`
+- generatedAt: `2026-06-29T10:14:08.564000+00:00`
+- 상태: `RECOMMENDED`
+- 신뢰도: `HIGH`
+- 현재 정책: `40명/분`
+- 추천 정책: `20명/분`
+- 현재 DB 반영 입장량: `20명/분`
+- DB 상태: `NORMAL (19/60)`
+- 표본: 대기열 진입 `402`, 입장권 `317`, 예약 요청 `317`, 예약 확정 `317`
+- 산출 지표: 안정 확정 처리량 `2.0건/분`, 원시 추천 `1.6명/분`, 운영 하한 `20명/분`
+- SQS/Worker: `HEALTHY`
+- Valkey: `HEALTHY`
+- Kafka pipeline: `HEALTHY`, events `1361`
+
+이 Slack 결과는 발표에서 “부하테스트로 1명/분 문제를 발견했고, 운영 guardrail을 넣어 20명/분으로 보정했다”는 근거로 사용할 수 있다.
+
+### 9.6 Time range filter로 실제 load 구간만 재분석
+
+하루치 `lookback_days=1` 분석에는 smoke, 순차 표본, baseline, load 표본이 함께 섞인다. 이 때문에 안정 확정 처리량이 실제 load 구간보다 낮게 보일 수 있다.
+
+Capacity Advisor에 `--occurred-after`, `--occurred-before` 필터를 추가한 뒤 30 VU load 구간만 다시 분석했다.
+
+실행 조건:
+
+```text
+occurred_after:  2026-06-29T09:30:00Z
+occurred_before: 2026-06-29T09:36:00Z
+current_policy: 40명/분
+current_db_connections: 19
+```
+
+결과:
+
+| 항목 | 결과 |
+| --- | --- |
+| 상태 | `RECOMMENDED` |
+| 신뢰도 | `MEDIUM` |
+| 대기열 진입 | 144 |
+| 입장권 발급 | 72 |
+| 예약 요청 | 72 |
+| 예약 확정 | 72 |
+| 안정 확정 처리량 | 27.0건/분 |
+| raw recommendation | 21.6명/분 |
+| 추천 정책 | 21명/분 |
+| 현재 DB 반영 입장량 | 21명/분 |
+| DB 상태 | `NORMAL (19/60)` |
+| SQS/Worker | `HEALTHY` |
+| Valkey | `HEALTHY` |
+| Kafka pipeline | `HEALTHY`, events `360` |
+
+해석:
+
+- 하루치 전체 분석에서 안정 확정 처리량이 2건/분으로 낮게 나온 이유는 실제 부하 구간이 아니라 smoke/순차 표본이 섞였기 때문이다.
+- 실제 30 VU load 구간만 보면 안정 확정 처리량은 27건/분이다.
+- 이 값에 안전계수 0.8을 적용하면 raw recommendation은 21.6명/분이고, 최종 추천은 21명/분이다.
+- 따라서 “우리 시스템이 1분에 1명밖에 못 받는다”가 아니라, 분석 구간을 정확히 분리해야 실제 처리량을 해석할 수 있다.
+
+### 9.7 최종 판단
 
 이번 검증의 결론:
 
@@ -478,6 +537,7 @@ DB 상태 NORMAL이므로 effectiveEnterPerMinuteNow = 20명/분
 - Read Replica 도입 여부는 아직 조회 API 중심 부하테스트 결과가 더 필요하다.
 - v1 추천값 1명/분은 안정성 관점에서는 보수적이지만 실제 운영 정책으로 바로 쓰기에는 너무 낮았다.
 - v2에서는 minimum floor와 최대 감소율 guardrail을 적용해 동일 입력 기준 추천값을 20명/분으로 보정했다.
+- time range filter로 실제 load 구간만 분리하면 안정 확정 처리량 27건/분, 추천 정책 21명/분으로 더 현실적인 값이 나온다.
 
 발표용 핵심 메시지:
 
@@ -641,17 +701,46 @@ recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
 
 1. Capacity Advisor 부하테스트 구간 분리 분석
    - 현재는 lookback window 내 이벤트를 함께 보므로 smoke/순차 표본과 load 표본이 섞일 수 있다.
-   - k6 `testRunId` 또는 `start_time/end_time` 필터를 추가하면 실제 부하 구간만 분리해 계산할 수 있다.
+   - `--occurred-after`, `--occurred-before` 필터를 사용하면 실제 부하 구간만 분리해 계산할 수 있다.
+   - 향후 k6가 이벤트 payload 또는 traceId에 `testRunId`를 넣으면 run id 기준 필터도 추가할 수 있다.
 
-2. 조회 API 중심 Read Replica 판단 부하테스트
+예시:
+
+```powershell
+python -B tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 28 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service `
+  --occurred-after 2026-06-29T09:24:00Z `
+  --occurred-before 2026-06-29T09:34:00Z
+```
+
+2. 시스템 보호 관점의 안전 처리량 확장
+   - 안전 처리량은 단순히 Advisor 산식을 높인다고 늘어나는 값이 아니다.
+   - 실제로는 아래 병목을 줄여야 더 많은 사용자를 안전하게 입장시킬 수 있다.
+
+| 개선 축 | 늘어나는 처리량 | 확인해야 할 지표 |
+| --- | --- | --- |
+| waiting-room 입장 정책 | 입장권 발급량 | token 발급률, 평균 대기시간, 4xx/5xx |
+| ticket-service write 경로 | 예약 요청/확정 처리량 | p95/p99, DB CPU, lock wait, connection |
+| SQS/ticket-worker | 예매 확정 비동기 처리량 | visible/not visible, oldest age, DLQ |
+| RDS connection 관리/RDS Proxy | connection storm 내성 | DatabaseConnections, Hikari timeout |
+| Read Replica/cache | 조회 부하 분산 | read API p95, RDS CPU/ReadIOPS |
+| Valkey | 대기열/좌석 잠금 안정성 | CPU, memory, eviction, replication lag |
+
+따라서 몇만 명이 몰리는 상황에서는 `20명/분`이 고정 상한이 아니다. 부하테스트로 실제 p95, DB/SQS/Valkey 여유, 예매 확정률을 보면서 입장 정책을 단계적으로 올릴 수 있다.
+3. 조회 API 중심 Read Replica 판단 부하테스트
    - `GET /api/games`, 좌석 조회, 예매 가능 좌석 조회처럼 read-heavy API p95와 RDS CPU/ReadIOPS를 별도로 확인한다.
    - 실제 조회 병목이 확인될 때 read replica 또는 cache 우선 전략을 선택한다.
 
-3. RDS Proxy 도입 판단 부하테스트
+4. RDS Proxy 도입 판단 부하테스트
    - connection storm, Hikari timeout, RDS `DatabaseConnections` budget 초과가 재현될 때 도입한다.
    - 이번 Capacity Advisor 부하테스트에서는 최대 28/60으로 즉시 도입 근거는 확인되지 않았다.
 
-4. waiting-room k6 check 기준 보정
+5. waiting-room k6 check 기준 보정
    - 대기열이 의도적으로 입장을 제한하는 상황을 무조건 실패로 보지 않도록 check 기준을 분리한다.
    - 예: “토큰 발급 성공률”과 “입장 제한 정상 동작”을 별도 지표로 기록한다.
 

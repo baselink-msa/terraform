@@ -1473,3 +1473,100 @@ docs/load-test-validation-plan.md
 docs/kafka-capacity-advisor-e2e-verification.md
 docs/project-continuity-handoff.md
 ```
+
+## 2026-06-29 추가 handoff: Capacity Advisor v2 Slack 검증과 time range filter
+
+Capacity Advisor guardrail PR merge 후 Slack Report를 다시 수동 실행했다.
+
+Slack report:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28364753080`
+- generatedAt: `2026-06-29T10:14:08.564000+00:00`
+- 상태: `RECOMMENDED`
+- 신뢰도: `HIGH`
+- 현재 정책: `40명/분`
+- 추천 정책: `20명/분`
+- 현재 DB 반영 입장량: `20명/분`
+- DB 상태: `NORMAL (19/60)`
+- 표본: 대기열 진입 `402`, 입장권 `317`, 예약 요청 `317`, 예약 확정 `317`
+- 산출 지표: 안정 확정 처리량 `2.0건/분`, 원시 추천 `1.6명/분`, 운영 하한 `20명/분`
+- SQS/Worker: `HEALTHY`
+- Valkey: `HEALTHY`
+- Kafka pipeline: `HEALTHY`, events `1361`
+
+의미:
+
+- v1에서는 같은 표본이 `1명/분`으로 내려갔지만, v2는 원시 계산값 `1.6명/분`을 보여주면서 운영 추천값을 `20명/분`으로 보정한다.
+- DB/SQS/Valkey가 정상인 상황에서 사용자 경험을 해칠 정도로 급격히 감속하지 않는다.
+- 발표에서는 “부하테스트로 1명/분 문제를 발견했고, 운영 guardrail을 넣어 20명/분으로 개선했다”고 설명한다.
+
+이번에 추가한 time range filter:
+
+- Capacity Advisor CLI에 `--occurred-after`, `--occurred-before` 추가
+- GitHub Actions `Capacity Advisor Slack Report` 수동 실행 input에 `occurred_after`, `occurred_before` 추가
+- Athena 기반 `collect_athena_inputs`, `capacity.signals`, `seat-lock`, `kafka pipeline health` 조회에 같은 시간 범위 조건 적용
+- Markdown/Slack report에 분석 시간 범위 표시
+
+사용 예시:
+
+```powershell
+python -B tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 28 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service `
+  --occurred-after 2026-06-29T09:24:00Z `
+  --occurred-before 2026-06-29T09:34:00Z
+```
+
+왜 필요한가:
+
+- 하루치 lookback만 사용하면 smoke, 순차 표본, load 표본이 섞인다.
+- 시간 범위를 지정하면 실제 부하테스트 구간만 잘라서 안정 처리량을 계산할 수 있다.
+- `testRunId`는 아직 이벤트 payload/schema에 실제 필드가 없으므로, k6 이벤트에 run id를 넣는 후속 작업이 필요하다.
+
+실제 30 VU load 구간 재분석 결과:
+
+```text
+occurred_after:  2026-06-29T09:30:00Z
+occurred_before: 2026-06-29T09:36:00Z
+```
+
+| 항목 | 결과 |
+| --- | --- |
+| 상태 | `RECOMMENDED` |
+| 신뢰도 | `MEDIUM` |
+| 대기열 진입 | 144 |
+| 입장권 발급 | 72 |
+| 예약 요청 | 72 |
+| 예약 확정 | 72 |
+| 안정 확정 처리량 | 27.0건/분 |
+| raw recommendation | 21.6명/분 |
+| 추천 정책 | 21명/분 |
+| DB 상태 | `NORMAL (19/60)` |
+| Kafka pipeline | `HEALTHY`, events `360` |
+
+중요 해석:
+
+- 하루치 전체 분석의 안정 확정 처리량 2건/분은 실제 시스템 한계가 아니라, smoke/순차 표본이 섞인 결과다.
+- 실제 load 구간만 보면 안정 확정 처리량은 27건/분이다.
+- 심사위원이 “안정 처리량이 왜 1~2명/분밖에 안 되나요?”라고 물으면, “초기 분석은 표본이 섞인 값이고, time range filter로 load 구간만 분리하니 27건/분으로 확인됐다”고 답하면 된다.
+
+안전 처리량을 실제로 늘리는 방향:
+
+- Capacity Advisor 산식만 높인다고 안전 처리량이 늘어나는 것은 아니다.
+- 실제로는 waiting-room 입장 정책, ticket-service write 성능, SQS worker 처리량, RDS connection 안정성, 조회 부하 분산, Valkey 안정성을 함께 개선해야 한다.
+- `20명/분`은 고정 상한이 아니라 현재 표본과 guardrail 기준의 운영 추천값이다.
+- 몇만 명이 몰리는 상황에서는 부하테스트로 p95, RDS/SQS/Valkey 여유, 예약 확정률을 확인하면서 입장 정책을 단계적으로 올릴 수 있다.
+
+다음 우선순위:
+
+```text
+P0. time range filter PR merge 후 Slack Report를 실제 부하 구간으로 수동 실행
+P1. k6 이벤트에 testRunId 추가 후 Advisor testRunId 필터 구현
+P1. 조회 API 중심 부하테스트로 Read Replica 필요성 판단
+P1. connection storm 시나리오로 RDS Proxy 필요성 판단
+P2. 발표용 캡처 목록 최종 정리
+```
