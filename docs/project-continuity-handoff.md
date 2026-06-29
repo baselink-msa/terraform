@@ -1240,3 +1240,45 @@ P1. 발표용 내 담당 파트 전체 요약 문서 최종 정리
 P2. event-driven Slack 알림: ADMISSION_THROTTLE_APPLIED, SQS DLQ 즉시 알림
 P2. 예매 오픈 30분 전/예매 중 5분마다 Capacity Advisor 자동 실행
 ```
+
+## 2026-06-29 추가 handoff: Slack에서 sink completed=1 최종 확인
+
+`infra.audit` 이벤트 적재 후 Capacity Advisor Slack Report를 다시 수동 실행했다.
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28361550976`
+- 상태: `RECOMMENDED`
+- SQS/Worker: `HEALTHY`
+- Valkey: `HEALTHY`
+- 좌석 잠금 이벤트 상태: `COMPETITION_DETECTED`
+- Kafka pipeline: `HEALTHY`
+
+Slack Kafka pipeline 섹션:
+
+```text
+events 91
+producer counts kafka-s3-sink=1, seat-lock-service=5, sqs-worker-audit-recorder=1, ticket-service=42, waiting-room-service=42
+event type counts KAFKA_S3_SINK_COMPLETED=1, SQS_WORKER_STATUS_RECORDED=1 포함
+producer failures 0 / invalid 0 / skipped 0 / sink completed 1
+```
+
+의미:
+
+- `KAFKA_S3_SINK_COMPLETED`와 `SQS_WORKER_STATUS_RECORDED`가 Athena event lake에 적재되고 Slack 리포트까지 반영됐다.
+- Capacity Advisor가 이제 대기열/예매 표본뿐 아니라 Kafka sink 실행 이력과 SQS worker 상태 기록까지 함께 보여준다.
+- 발표에서는 “Kafka/S3/Athena 기반 event lake에 운영 이벤트와 인프라 audit 이벤트를 함께 모으고, Slack 리포트에서 운영 의사결정에 필요한 상태를 통합 제공했다”고 설명하면 된다.
+
+현재 개인 프로젝트 완료 판단:
+
+```text
+MVP+ 수준 완료
+-> MSK Serverless
+-> waiting/ticket/seat-lock/capacity signal 이벤트
+-> Kafka -> S3/Athena event lake
+-> Capacity Advisor 추천
+-> SQS/Valkey/Kafka pipeline health
+-> seat-lock event summary
+-> infra audit event 1차 기록
+-> Slack 운영 리포트 검증
+```
+
+다음 우선순위는 실제 부하테스트 기반 추천값 재검증이다.
