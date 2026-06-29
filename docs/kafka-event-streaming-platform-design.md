@@ -105,6 +105,7 @@ Partition key:
 | --- | --- | --- |
 | `ticket.domain.events` | `RESERVATION_REQUESTED`, `RESERVATION_CONFIRMED` | 예매 요청/확정 처리량 분석, Capacity Advisor 표본 |
 | `waiting.operational.events` | `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED` | 대기열 유입량, 입장권 발급량, 평균 대기시간 분석 |
+| `reservation.lifecycle.events` | `SEAT_LOCK_REQUESTED`, `SEAT_LOCKED`, `SEAT_LOCK_FAILED`, `SEAT_UNLOCKED` | 좌석 잠금 성공/실패/해제 흐름 분석, Valkey 상태와 상관관계 분석 |
 | `capacity.signals` | `ADMISSION_THROTTLE_APPLIED`, `ADMISSION_STOP_APPLIED`, `ADMISSION_THROTTLE_RECOVERED` | RDS connection 압력에 따른 감속/중지/복구 이력 분석 |
 
 현재 Capacity Advisor 리포트는 아래 내용을 함께 본다.
@@ -209,6 +210,7 @@ Backend event
 - 2026-06-29 기준 Capacity Advisor Slack report workflow 구현 완료
 - 2026-06-29 기준 SQS/Worker와 Valkey/좌석 잠금 계층 상태를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
 - 2026-06-29 기준 Athena event lake 기반 Kafka pipeline health를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
+- 2026-06-29 기준 `seat-lock-service` 좌석 잠금 이벤트 Kafka publish와 Kafka→S3 sink 허용 event type 반영 완료
 
 생성 완료 topic:
 
@@ -409,7 +411,16 @@ SEAT_UNLOCKED
 - JSON/Markdown 리포트에 `valkeyStatus` 섹션을 추가했습니다.
 - Slack report에도 `Valkey/좌석 잠금 계층 상태` 섹션을 추가했습니다.
 - `EVICTIONS_DETECTED`, `REPLICATION_LAG`는 위험 알림 emoji, `CPU_HIGH`, `MEMORY_HIGH`는 주의 알림 emoji로 표시합니다.
-- 아직 `seat-lock-service`가 Kafka로 좌석 잠금 event를 발행하는 단계는 아닙니다. 현재는 리포트 생성 시점의 Valkey 현재 상태를 조회하는 방식입니다.
+
+2026-06-29 2차 구현 상태:
+
+- `seat-lock-service`가 `reservation.lifecycle.events` topic으로 좌석 잠금 이벤트를 발행합니다.
+- 구현 event type은 `SEAT_LOCK_REQUESTED`, `SEAT_LOCKED`, `SEAT_LOCK_FAILED`, `SEAT_UNLOCKED`입니다.
+- Kafka publish 실패는 좌석 잠금 API를 실패시키지 않고 metric/log로만 남깁니다.
+- 성공 이벤트인 `SEAT_LOCKED`, `SEAT_UNLOCKED`는 DB transaction commit 이후 발행되도록 구성했습니다.
+- `lockId` 같은 좌석 잠금 토큰성 값은 payload에 저장하지 않습니다.
+- Kafka→S3 sink runner가 seat-lock event type을 허용하도록 확장했습니다.
+- `SEAT_LOCK_EXPIRED`는 Valkey TTL 만료를 정확히 감지하는 keyspace notification 또는 sweep job이 생긴 뒤 추가하는 후속 작업으로 남겨둡니다.
 
 리포트 활용:
 

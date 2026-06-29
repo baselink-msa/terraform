@@ -70,6 +70,30 @@ class KafkaS3SinkTest(unittest.TestCase):
         self.assertIn("event_type=ADMISSION_THROTTLE_APPLIED", key)
         self.assertIn("game_id=9001", key)
 
+    def test_accepts_seat_lock_event_type(self):
+        event, occurred_at = sink.parse_event(
+            json.dumps(
+                self.event(
+                    eventType="SEAT_LOCKED",
+                    producer="seat-lock-service",
+                    aggregateType="SEAT_LOCK",
+                    aggregateId="game-9001:seat-123",
+                    gameId=9001,
+                    payload={
+                        "gameId": 9001,
+                        "seatId": 123,
+                        "status": "LOCKED",
+                        "lockTtlSeconds": 300,
+                    },
+                )
+            )
+        )
+
+        key = sink.object_key(event, occurred_at, "ticket-events")
+
+        self.assertIn("event_type=SEAT_LOCKED", key)
+        self.assertIn("game_id=9001", key)
+
     def test_dry_run_skips_non_selected_producer(self):
         lines = [
             json.dumps(self.event(producer="ticket-service")),

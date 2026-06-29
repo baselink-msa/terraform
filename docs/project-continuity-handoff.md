@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림, Capacity Advisor Slack 리포트 workflow 구현 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 4 일부 완료 | MSK Serverless, topic 5개, ticket/waiting/capacity signal publish, Kafka→S3 sink, Capacity Advisor Slack 리포트, SQS/Worker·Valkey·Kafka pipeline health 섹션 구현 |
+| Kafka/MSK 개인 프로젝트 | Phase 4 일부 완료 | MSK Serverless, topic 5개, ticket/waiting/seat-lock/capacity signal publish, Kafka→S3 sink, Capacity Advisor Slack 리포트, SQS/Worker·Valkey·Kafka pipeline health 섹션 구현 |
 | 발표 문서 | 진행 중 | 담당 파트 발표 outline 작성, Slack 리포트/알림 채널/확장 로드맵 보강 중 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -247,6 +247,8 @@ Kafka 도입 목적:
 - Capacity Advisor가 `ticket-confirm-queue`와 `ticket-confirm-dlq`의 SQS 상태를 조회해 리포트와 Slack 메시지에 포함하도록 구현 완료
 - Capacity Advisor가 Valkey CloudWatch metric을 조회해 CPU, memory, eviction, replication lag 상태를 리포트와 Slack 메시지에 포함하도록 구현 완료
 - Capacity Advisor가 Athena event lake를 조회해 Kafka pipeline health를 리포트와 Slack 메시지에 포함하도록 구현 완료
+- `seat-lock-service`가 `reservation.lifecycle.events`로 좌석 잠금 이벤트를 발행하도록 구현 완료
+- Kafka→S3 sink runner가 `SEAT_LOCK_REQUESTED`, `SEAT_LOCKED`, `SEAT_LOCK_FAILED`, `SEAT_UNLOCKED`를 허용하도록 확장 완료
 
 현재 확인된 bootstrap broker:
 
@@ -305,6 +307,7 @@ Phase 4 일부 완료
 -> Capacity Advisor SQS/Worker 상태 섹션 구현
 -> Capacity Advisor Valkey/좌석 잠금 계층 상태 섹션 구현
 -> Capacity Advisor Kafka pipeline health 섹션 구현
+-> seat-lock-service 좌석 잠금 이벤트 Kafka publish 구현
 ```
 
 다음 단계:
@@ -957,8 +960,9 @@ Kafka 리포트 확장 후보:
    - Valkey engine CPU, memory, evictions, replication lag
    - 좌석 lock/access token 같은 TTL key 유실 위험 해석
 
-3. 좌석 잠금 Kafka 이벤트 - 남은 확장
-   - seat lock requested/locked/failed/expired/unlocked
+3. 좌석 잠금 Kafka 이벤트 - 1차 구현 완료
+   - seat lock requested/locked/failed/unlocked
+   - expired 이벤트는 Valkey TTL 만료 감지 구조를 붙인 뒤 후속 구현
    - Valkey 부하와 좌석 선점 실패 상관관계 분석
 
 4. Kafka 파이프라인 자체 상태 - Athena event lake 기반 1차 구현 완료
@@ -988,7 +992,7 @@ SQS DLQ 발생
 ```text
 1. CAPACITY_ADVISOR_SLACK_WEBHOOK_URL Secret 추가 여부 결정
 2. Slack report workflow 수동 실행으로 캡처 확보
-3. seat-lock-service Kafka 이벤트 발행 설계/구현
+3. seat-lock-service Kafka 이벤트 dev 배포 후 consume/S3/Athena 검증
 4. SQS/Worker 상태를 Kafka `infra.audit.events` 이벤트 이력으로 확장
 5. 실제 Kafka sink 실행 결과를 `infra.audit.events`로 적재
 6. 실제 부하테스트 결과로 Capacity Advisor 추천값 보정
