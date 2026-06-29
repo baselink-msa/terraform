@@ -265,7 +265,201 @@ Read Replica는 무조건 만드는 것이 아니라,
 조회성 API부터 분리하는 방식으로 도입하는 것이 안전합니다.
 ```
 
-## 9. 결과 기록 템플릿
+## 9. 2026-06-29 실제 부하테스트 기반 Capacity Advisor 재검증
+
+### 9.1 검증 목적
+
+이번 검증의 목적은 Capacity Advisor가 수동으로 만든 작은 표본이 아니라 실제 k6 부하테스트로 생성된 이벤트 표본을 기준으로 안전 입장량을 다시 계산할 수 있는지 확인하는 것이다.
+
+검증 흐름:
+
+```text
+k6 부하테스트
+-> waiting-room-service / ticket-service 실제 API 호출
+-> Kafka 이벤트 발행
+-> Kafka to S3 sink 실행
+-> S3/Athena event lake 최신화
+-> Capacity Advisor 재계산
+-> RDS/SQS/Valkey/Kafka pipeline health 함께 확인
+```
+
+이 검증을 통해 다음을 확인했다.
+
+- 부하 상황에서도 ticket reserve/confirm 경로가 정상 처리되는가
+- waiting-room admission control이 입장 제한을 실제로 수행하는가
+- Kafka/S3/Athena event lake가 부하테스트 이벤트를 분석 가능한 표본으로 축적하는가
+- Capacity Advisor가 실제 부하 표본을 기반으로 추천값과 판단 근거를 생성하는가
+- RDS Proxy 또는 Read Replica를 즉시 도입해야 할 정도의 DB 병목이 있었는가
+
+### 9.2 k6 실행 결과
+
+실행 환경:
+
+| 항목 | 값 |
+| --- | --- |
+| 부하테스트 실행 위치 | EC2 `baselink-dev-loadtest-20260628` |
+| 대상 gameId | `9001` |
+| 주요 API 흐름 | 대기열 진입 -> 입장권 발급 -> 예매 요청 -> 예매 확정 |
+| 결과 파일 위치 | `/opt/baselink-loadtest/results/*/summary.json` |
+
+실행 결과:
+
+| 시나리오 | VU | 기간 | HTTP 요청 수 | HTTP 실패율 | Check 성공률 | 전체 p95 | 예약 요청 p95 | 예약 확정 p95 | 입장권 발급 p95 |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| smoke | 2 | 1m | 321 | 0.00% | 99.84% | 93.45ms | 41.95ms | 39.19ms | 111.91ms |
+| baseline | 10 | 3m | 1,278 | 0.08% | 99.80% | 68.86ms | 57.16ms | 43.15ms | 87.83ms |
+| load | 30 | 5m | 3,549 | 0.20% | 74.27% | 55.61ms | 129.80ms | 126.23ms | 133.13ms |
+
+30 VU load 시나리오에서 k6 `checks` threshold는 실패했다. 다만 실패 원인은 ticket reserve/confirm API가 아니라 waiting-room token/status check였다.
+
+주요 check 결과:
+
+| 시나리오 | issue-token 성공 | issue-token 실패 | ticket reserve 성공 | ticket reserve 실패 | ticket confirm 성공 | ticket confirm 실패 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| smoke | 72 | 0 | 72 | 0 | 72 | 0 |
+| baseline | 152 | 1 | 152 | 0 | 152 | 0 |
+| load | 72 | 7 | 72 | 0 | 72 | 0 |
+
+해석:
+
+- smoke와 baseline에서는 API와 예매 확정 흐름이 거의 정상이고 응답 시간도 안정적이다.
+- 30 VU load에서는 HTTP 실패율이 0.20%로 낮지만, 대기열 position/token check 성공률이 떨어졌다.
+- ticket reserve/confirm은 load 시나리오에서도 성공했고 p95도 130ms 안팎으로 유지됐다.
+- 따라서 이번 부하에서 확인된 주요 현상은 DB/RDS 병목이 아니라 waiting-room admission control에 의한 입장 제한이다.
+
+### 9.3 부하 이후 인프라 상태
+
+부하테스트 직후 확인한 주요 인프라 지표:
+
+| 영역 | 결과 | 해석 |
+| --- | --- | --- |
+| RDS DatabaseConnections | 최대 28/60 | connection budget 대비 여유 있음 |
+| SQS `ticket-confirm-queue` | visible 0 / not visible 0 / delayed 0 | worker backlog 없음 |
+| SQS `ticket-confirm-dlq` | visible 0 / not visible 0 / delayed 0 | DLQ 누적 없음 |
+| backend deployment | waiting-room, ticket, ticket-worker, seat-lock 모두 2/2 Ready | 부하 후 rollout/Pod 상태 정상 |
+| Valkey | CPU 1.23%, memory 5.32%, evictions 0, replication lag 0초 | 좌석 잠금/대기열 캐시 계층 안정 |
+
+KEDA 상태:
+
+- `ticket-worker-scaler`는 SQS trigger 기준으로 Ready 상태였다.
+- 예측 감속 관련 backend scaler들은 운영 정책상 paused 상태였다.
+- SQS backlog가 없었기 때문에 worker scale-out이 필요한 상황은 아니었다.
+
+### 9.4 Kafka/S3/Athena 적재와 Capacity Advisor 재계산
+
+부하테스트 이후 Kafka 이벤트를 S3 event lake로 다시 적재했다.
+
+```powershell
+python -B tools/kafka_s3_sink.py `
+  --consume `
+  --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --topics ticket.domain.events waiting.operational.events reservation.lifecycle.events capacity.signals `
+  --namespace baselink-dev `
+  --service-account backend-runtime `
+  --topic-timeout-ms 20000 `
+  --ready-timeout-seconds 180 `
+  --max-seconds 240 `
+  --emit-audit-event
+```
+
+또한 부하 이후 SQS/worker 상태를 audit event로 남겼다.
+
+```powershell
+python -B tools/record_sqs_worker_audit.py `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --source-queue-name ticket-confirm-queue `
+  --dlq-name ticket-confirm-dlq `
+  --region ap-northeast-2
+```
+
+audit 결과:
+
+```json
+{
+  "eventType": "SQS_WORKER_STATUS_RECORDED",
+  "status": "HEALTHY",
+  "visible_messages": 0,
+  "not_visible_messages": 0,
+  "oldest_message_age_seconds": 0,
+  "dlq_visible_messages": 0
+}
+```
+
+Capacity Advisor 재계산 명령:
+
+```powershell
+python -B tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 28 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service `
+  --sqs-source-queue-name ticket-confirm-queue `
+  --sqs-dlq-name ticket-confirm-dlq `
+  --valkey-cluster-ids baselink-dev-redis-001,baselink-dev-redis-002 `
+  --valkey-replica-cluster-ids baselink-dev-redis-002 `
+  --output-dir capacity-reports/loadtest-capacity-advisor-20260629
+```
+
+Capacity Advisor 결과:
+
+| 항목 | 결과 |
+| --- | --- |
+| 상태 | `RECOMMENDED` |
+| 신뢰도 | `HIGH` |
+| 현재 정책 | 40명/분 |
+| 추천 정책 | 1명/분 |
+| DB 상태 | `NORMAL` (28/60) |
+| 대기열 진입 | 402 |
+| 입장권 발급 | 317 |
+| 예약 요청 | 317 |
+| 예약 확정 | 317 |
+| 안정 구간 예약 확정 처리량 | 2.0건/분 |
+| 예약 확정률 | 100.0% |
+| 평균 대기 시간 | 약 8.31초 |
+| Kafka pipeline health | `HEALTHY`, total events 1,361 |
+| SQS/Worker | `HEALTHY` |
+| Valkey | `HEALTHY` |
+
+추천값이 1명/분으로 나온 이유:
+
+```text
+stable_confirmed_per_minute = 2.0
+reservation_conversion = 100%
+safety_factor = 0.8
+waiting_factor = 1.0
+
+raw_recommendation = 2.0 * 1.0 * 0.8 * 1.0 = 1.6
+recommendedPolicyEnterPerMinute = floor(1.6) = 1
+```
+
+따라서 이번 추천값은 DB가 위험해서 1명/분을 제안한 것이 아니다. 현재 부하테스트에서 관측된 실제 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 1명/분으로 계산됐다.
+
+### 9.5 최종 판단
+
+이번 검증의 결론:
+
+- Capacity Advisor는 실제 부하테스트 이벤트를 기준으로 `HIGH` 신뢰도 추천값을 생성했다.
+- Kafka -> S3 -> Athena -> Capacity Advisor 분석 경로는 부하테스트 표본 기준으로 정상 동작했다.
+- SQS worker backlog와 DLQ는 발생하지 않았다.
+- Valkey CPU, memory, eviction, replication lag는 안정적이었다.
+- RDS connection은 최대 28/60으로 여유가 있었고, RDS Proxy를 즉시 도입해야 할 connection storm은 확인되지 않았다.
+- ticket reserve/confirm p95가 130ms 안팎으로 유지되어 예매 write 경로의 DB 병목은 확인되지 않았다.
+- Read Replica 도입 여부는 아직 조회 API 중심 부하테스트 결과가 더 필요하다.
+- 추천값 1명/분은 안정성 관점에서는 보수적이지만, 실제 운영 정책으로 바로 쓰기에는 너무 낮을 수 있으므로 floor/감소율 guardrail 고도화가 필요하다.
+
+발표용 핵심 메시지:
+
+```text
+구현에서 끝내지 않고 실제 부하테스트 이벤트를 Kafka/S3/Athena에 적재해 Capacity Advisor 추천값을 재검증했다.
+이번 부하에서는 DB/RDS 병목이나 SQS backlog가 아니라 waiting-room admission control이 먼저 입장을 제한했다.
+따라서 RDS Proxy는 즉시 도입이 아니라 connection storm이 확인될 때 도입하고,
+Read Replica는 조회 API 부하 검증 후 판단하는 것이 합리적이다.
+```
+
+## 10. 결과 기록 템플릿
 
 부하테스트가 끝나면 아래 형식으로 결과를 남긴다.
 
@@ -330,9 +524,9 @@ Judgement:
 - 발표에 사용할 핵심 메시지:
 ```
 
-## 10. 부하테스트 결과별 후속 판단
+## 11. 부하테스트 결과별 후속 판단
 
-### 10.1 정상 동작
+### 11.1 정상 동작
 
 ```text
 k6 threshold 통과
@@ -347,7 +541,7 @@ RDS/SQS/Valkey 지표 안정
 - 발표 캡처 정리
 - RDS Proxy/Read Replica는 조건부 도입으로 정리
 
-### 10.2 RDS connection 병목
+### 11.2 RDS connection 병목
 
 ```text
 DatabaseConnections 급증
@@ -361,7 +555,7 @@ RDS CPU는 낮거나 보통
 - RDS Proxy 도입 타당성 문서화
 - connection diagnostic script 검토
 
-### 10.3 읽기 병목
+### 11.3 읽기 병목
 
 ```text
 조회 API p95 증가
@@ -375,7 +569,7 @@ write 경로보다 read 경로가 병목
 - reader datasource 분리 대상 API 선정
 - replica lag 허용 범위 정의
 
-### 10.4 SQS worker 병목
+### 11.4 SQS worker 병목
 
 ```text
 Visible messages 지속 증가
@@ -389,7 +583,7 @@ DLQ 증가
 - Visibility Timeout 재검토
 - batch 처리량과 재시도 정책 점검
 
-### 10.5 Capacity Advisor 추천값 과도하게 낮음
+### 11.5 Capacity Advisor 추천값 과도하게 낮음
 
 ```text
 recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
@@ -403,9 +597,9 @@ recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
 - 성공 처리량 산식 재검토
 - 직전 정책 대비 최대 감소율 적용
 
-## 11. 이번 문서화 작업의 의미
+## 12. 이번 문서화 작업의 의미
 
-이 작업은 부하테스트를 당장 실행하지 못하는 상황에서도, 테스트가 가능해졌을 때 결과를 바로 해석할 수 있도록 기준을 먼저 세우는 작업이다.
+이 작업은 부하테스트 결과를 단순한 k6 숫자로 남기지 않고, RDS/SQS/Valkey/Kafka/Capacity Advisor 관점에서 운영 판단까지 연결하기 위한 문서화 작업이다.
 
 기대 효과:
 
@@ -414,7 +608,25 @@ recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
 - Capacity Advisor 추천값이 왜 그런지 설명할 수 있다.
 - 발표에서 구현했다가 아니라 검증했고 병목 판단 기준을 세웠다는 메시지를 만들 수 있다.
 
-## 12. 관련 문서
+## 13. 다음 고도화 후보
+
+1. Capacity Advisor 최소 운영 floor와 최대 감소율 guardrail
+   - 현재 추천값은 관측 처리량에 안전계수와 `floor()`를 적용해 매우 보수적으로 내려갈 수 있다.
+   - 운영 정책으로 바로 쓰려면 예매 오픈 규모, 목표 대기시간, 최소 입장 보장값을 반영해야 한다.
+
+2. 조회 API 중심 Read Replica 판단 부하테스트
+   - `GET /api/games`, 좌석 조회, 예매 가능 좌석 조회처럼 read-heavy API p95와 RDS CPU/ReadIOPS를 별도로 확인한다.
+   - 실제 조회 병목이 확인될 때 read replica 또는 cache 우선 전략을 선택한다.
+
+3. RDS Proxy 도입 판단 부하테스트
+   - connection storm, Hikari timeout, RDS `DatabaseConnections` budget 초과가 재현될 때 도입한다.
+   - 이번 Capacity Advisor 부하테스트에서는 최대 28/60으로 즉시 도입 근거는 확인되지 않았다.
+
+4. waiting-room k6 check 기준 보정
+   - 대기열이 의도적으로 입장을 제한하는 상황을 무조건 실패로 보지 않도록 check 기준을 분리한다.
+   - 예: “토큰 발급 성공률”과 “입장 제한 정상 동작”을 별도 지표로 기록한다.
+
+## 14. 관련 문서
 
 - `docs/data-async-status-roadmap.md`
 - `docs/project-continuity-handoff.md`
