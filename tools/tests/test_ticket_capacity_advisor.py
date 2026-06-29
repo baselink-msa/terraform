@@ -305,6 +305,42 @@ class CapacityAdvisorTest(unittest.TestCase):
         self.assertIn("ticket-service=12", markdown)
         self.assertIn("RESERVATION_CONFIRMED=6", markdown)
 
+    def test_report_includes_seat_lock_summary(self):
+        seat_lock = advisor.SeatLockSummary(
+            status="COMPETITION_DETECTED",
+            requested=2,
+            locked=1,
+            failed=1,
+            unlocked=1,
+            success_rate_percent=50.0,
+            failure_rate_percent=50.0,
+            unlock_rate_percent=100.0,
+            latest_event_type="SEAT_UNLOCKED",
+            latest_occurred_at="2026-06-29T07:57:30Z",
+            latest_seat_id=123,
+        )
+
+        report = advisor.calculate_recommendation(
+            self.inputs(),
+            seat_lock=seat_lock,
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual("COMPETITION_DETECTED", report["seatLock"]["status"])
+        self.assertIn("## 좌석 잠금 이벤트 상태", markdown)
+        self.assertIn("SEAT_UNLOCKED", markdown)
+        self.assertIn("50.0%", markdown)
+
+    def test_seat_lock_status_detects_high_failure_rate(self):
+        status = advisor._seat_lock_status(
+            requested=10,
+            failed=7,
+            failure_rate_percent=70.0,
+            failure_rate_threshold_percent=60,
+        )
+
+        self.assertEqual("FAILURE_RATE_HIGH", status)
+
     def test_valkey_status_prioritizes_evictions(self):
         status = advisor._valkey_status(
             max_engine_cpu_percent=90.0,

@@ -123,6 +123,38 @@ class HandlerTest(unittest.TestCase):
             kwargs["Key"],
         )
 
+    def test_accepts_infra_audit_event_type(self):
+        audit_event = envelope(event_type="KAFKA_S3_SINK_COMPLETED")
+        audit_event["producer"] = "kafka-s3-sink"
+        audit_event["aggregateType"] = "INFRA_AUDIT"
+        audit_event["aggregateId"] = "kafka-s3-sink:123"
+        audit_event["gameId"] = None
+        audit_event["payload"] = {
+            "status": "COMPLETED",
+            "accepted": 5,
+            "written": 5,
+            "skipped": 0,
+            "invalid": 0,
+        }
+
+        result = handler.lambda_handler(
+            {
+                "Records": [
+                    {"messageId": "infra-audit", "body": json.dumps(audit_event)}
+                ]
+            },
+            None,
+        )
+
+        self.assertEqual({"batchItemFailures": []}, result)
+        _, kwargs = fake_s3.put_object.call_args
+        self.assertEqual(
+            "ticket-events/event_date=2026-06-22/"
+            "event_type=KAFKA_S3_SINK_COMPLETED/game_id=unknown/"
+            "019f1234-7abc-7000-9000-123456789abc.json",
+            kwargs["Key"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

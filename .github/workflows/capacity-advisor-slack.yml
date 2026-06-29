@@ -104,6 +104,8 @@ jobs:
           echo "KAFKA_EXPECTED_PRODUCERS=${{ vars.CAPACITY_ADVISOR_KAFKA_EXPECTED_PRODUCERS || inputs.producer_in || vars.CAPACITY_ADVISOR_PRODUCER_IN || 'ticket-service,waiting-room-service' }}" >> "$GITHUB_ENV"
           echo "KAFKA_EXPECTED_EVENT_TYPES=${{ vars.CAPACITY_ADVISOR_KAFKA_EXPECTED_EVENT_TYPES || 'WAITING_ENTERED,ACCESS_TOKEN_ISSUED,RESERVATION_REQUESTED,RESERVATION_CONFIRMED' }}" >> "$GITHUB_ENV"
           echo "KAFKA_STALE_AFTER_HOURS=${{ vars.CAPACITY_ADVISOR_KAFKA_STALE_AFTER_HOURS || '24' }}" >> "$GITHUB_ENV"
+          echo "SEAT_LOCK_PRODUCER=${{ vars.CAPACITY_ADVISOR_SEAT_LOCK_PRODUCER || 'seat-lock-service' }}" >> "$GITHUB_ENV"
+          echo "SEAT_LOCK_FAILURE_RATE_THRESHOLD_PERCENT=${{ vars.CAPACITY_ADVISOR_SEAT_LOCK_FAILURE_RATE_THRESHOLD_PERCENT || '60' }}" >> "$GITHUB_ENV"
 
       - name: Resolve current DB connections
         shell: bash
@@ -162,7 +164,9 @@ jobs:
             --valkey-eviction-threshold "${VALKEY_EVICTION_THRESHOLD}" \
             --kafka-expected-producers "${KAFKA_EXPECTED_PRODUCERS}" \
             --kafka-expected-event-types "${KAFKA_EXPECTED_EVENT_TYPES}" \
-            --kafka-stale-after-hours "${KAFKA_STALE_AFTER_HOURS}"
+            --kafka-stale-after-hours "${KAFKA_STALE_AFTER_HOURS}" \
+            --seat-lock-producer "${SEAT_LOCK_PRODUCER}" \
+            --seat-lock-failure-rate-threshold-percent "${SEAT_LOCK_FAILURE_RATE_THRESHOLD_PERCENT}"
 
       - name: Send Slack notification
         shell: bash

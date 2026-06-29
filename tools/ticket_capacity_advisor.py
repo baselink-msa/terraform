@@ -102,6 +102,24 @@ class KafkaPipelineHealthSummary:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class SeatLockSummary:
+    producer: str = "seat-lock-service"
+    status: str = "UNKNOWN"
+    requested: int = 0
+    locked: int = 0
+    failed: int = 0
+    unlocked: int = 0
+    success_rate_percent: float | None = None
+    failure_rate_percent: float | None = None
+    unlock_rate_percent: float | None = None
+    latest_event_type: str | None = None
+    latest_occurred_at: str | None = None
+    latest_seat_id: int | None = None
+    failure_rate_threshold_percent: int = 60
+    error: str | None = None
+
+
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
     if connection_count >= budget:
         return "STOP", 0
@@ -122,6 +140,7 @@ def calculate_recommendation(
     sqs_worker: SqsWorkerSummary | None = None,
     valkey_status: ValkeyStatusSummary | None = None,
     kafka_pipeline_health: KafkaPipelineHealthSummary | None = None,
+    seat_lock: SeatLockSummary | None = None,
 ) -> dict[str, Any]:
     pressure_level, throttle_percent = db_pressure(
         inputs.current_db_connections, inputs.db_connection_budget
@@ -159,6 +178,7 @@ def calculate_recommendation(
         "kafkaPipelineHealth": asdict(
             kafka_pipeline_health or KafkaPipelineHealthSummary()
         ),
+        "seatLock": asdict(seat_lock or SeatLockSummary()),
     }
     if insufficient:
         return {
@@ -700,6 +720,9 @@ KAFKA_INFRA_AUDIT_EVENT_TYPES = {
     "KAFKA_EVENT_SKIPPED",
     "KAFKA_EVENT_INVALID",
     "KAFKA_S3_SINK_COMPLETED",
+    "SQS_WORKER_STATUS_RECORDED",
+    "SQS_BACKLOG_DETECTED",
+    "SQS_DLQ_DETECTED",
 }
 
 
@@ -964,6 +987,107 @@ def collect_capacity_signals(
     )
 
 
+def _safe_percent(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator * 100, 2)
+
+
+def _seat_lock_status(
+    requested: int,
+    failed: int,
+    failure_rate_percent: float | None,
+    failure_rate_threshold_percent: int,
+) -> str:
+    if requested <= 0:
+        return "NO_EVENTS"
+    if (
+        failure_rate_percent is not None
+        and failure_rate_percent > failure_rate_threshold_percent
+    ):
+        return "FAILURE_RATE_HIGH"
+    if failed > 0:
+        return "COMPETITION_DETECTED"
+    return "HEALTHY"
+
+
+def collect_seat_lock_summary(
+    game_id: int,
+    lookback_days: int,
+    database: str,
+    workgroup: str,
+    region: str,
+    producer: str = "seat-lock-service",
+    failure_rate_threshold_percent: int = 60,
+) -> SeatLockSummary:
+    try:
+        start_date = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)
+        ).date()
+        producer_sql = producer.replace("'", "''")
+        query = f"""
+        WITH locks AS (
+          SELECT *
+          FROM ticket_events
+          WHERE event_date >= '{start_date.isoformat()}'
+            AND gameId = {game_id}
+            AND producer = '{producer_sql}'
+            AND event_type IN (
+              'SEAT_LOCK_REQUESTED',
+              'SEAT_LOCKED',
+              'SEAT_LOCK_FAILED',
+              'SEAT_UNLOCKED'
+            )
+        )
+        SELECT
+          count_if(event_type = 'SEAT_LOCK_REQUESTED'),
+          count_if(event_type = 'SEAT_LOCKED'),
+          count_if(event_type = 'SEAT_LOCK_FAILED'),
+          count_if(event_type = 'SEAT_UNLOCKED'),
+          coalesce(max_by(event_type, from_iso8601_timestamp(occurredAt)), ''),
+          coalesce(max_by(occurredAt, from_iso8601_timestamp(occurredAt)), ''),
+          coalesce(CAST(max_by(payload.seatId, from_iso8601_timestamp(occurredAt)) AS varchar), '')
+        FROM locks
+        """
+        values = _run_athena_query(query, database, workgroup, region)
+        if len(values) != 7:
+            raise RuntimeError("Athena seat-lock query returned an unexpected result")
+        requested = int(values[0] or 0)
+        locked = int(values[1] or 0)
+        failed = int(values[2] or 0)
+        unlocked = int(values[3] or 0)
+        success_rate = _safe_percent(locked, requested)
+        failure_rate = _safe_percent(failed, requested)
+        unlock_rate = _safe_percent(unlocked, locked)
+        status = _seat_lock_status(
+            requested,
+            failed,
+            failure_rate,
+            failure_rate_threshold_percent,
+        )
+        return SeatLockSummary(
+            producer=producer,
+            status=status,
+            requested=requested,
+            locked=locked,
+            failed=failed,
+            unlocked=unlocked,
+            success_rate_percent=success_rate,
+            failure_rate_percent=failure_rate,
+            unlock_rate_percent=unlock_rate,
+            latest_event_type=values[4] or None,
+            latest_occurred_at=values[5] or None,
+            latest_seat_id=_optional_int(values[6]),
+            failure_rate_threshold_percent=failure_rate_threshold_percent,
+        )
+    except Exception as exc:
+        return SeatLockSummary(
+            producer=producer,
+            failure_rate_threshold_percent=failure_rate_threshold_percent,
+            error=str(exc),
+        )
+
+
 def _format_counts(counts: dict[str, int]) -> str:
     if not counts:
         return "정보 없음"
@@ -976,6 +1100,7 @@ def markdown_report(report: dict[str, Any]) -> str:
     sqs_worker = report.get("sqsWorker") or {}
     valkey_status = report.get("valkeyStatus") or {}
     kafka_health = report.get("kafkaPipelineHealth") or {}
+    seat_lock = report.get("seatLock") or {}
     sqs_oldest_age = sqs_worker.get("oldest_message_age_seconds")
     sqs_oldest_age_text = (
         f"{sqs_oldest_age}초" if sqs_oldest_age is not None else "정보 없음"
@@ -990,6 +1115,18 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"{valkey_memory}%" if valkey_memory is not None else "정보 없음"
     )
     valkey_lag_text = f"{valkey_lag}초" if valkey_lag is not None else "정보 없음"
+    seat_lock_success_rate = seat_lock.get("success_rate_percent")
+    seat_lock_failure_rate = seat_lock.get("failure_rate_percent")
+    seat_lock_unlock_rate = seat_lock.get("unlock_rate_percent")
+    seat_lock_success_text = (
+        f"{seat_lock_success_rate}%" if seat_lock_success_rate is not None else "정보 없음"
+    )
+    seat_lock_failure_text = (
+        f"{seat_lock_failure_rate}%" if seat_lock_failure_rate is not None else "정보 없음"
+    )
+    seat_lock_unlock_text = (
+        f"{seat_lock_unlock_rate}%" if seat_lock_unlock_rate is not None else "정보 없음"
+    )
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -1095,6 +1232,33 @@ def markdown_report(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## 좌석 잠금 이벤트 상태",
+            "",
+            f"- 상태: `{seat_lock.get('status', 'UNKNOWN')}`",
+            f"- producer: `{seat_lock.get('producer', 'seat-lock-service')}`",
+            f"- 잠금 요청: `{seat_lock.get('requested', 0)}건`",
+            f"- 잠금 성공: `{seat_lock.get('locked', 0)}건`",
+            f"- 잠금 실패: `{seat_lock.get('failed', 0)}건`",
+            f"- 잠금 해제: `{seat_lock.get('unlocked', 0)}건`",
+            f"- 잠금 성공률: `{seat_lock_success_text}`",
+            f"- 잠금 실패율: `{seat_lock_failure_text}`",
+            f"- 잠금 해제율: `{seat_lock_unlock_text}`",
+            f"- 최근 이벤트: `{seat_lock.get('latest_event_type') or '정보 없음'}`",
+            f"- 최근 이벤트 시각: `{seat_lock.get('latest_occurred_at') or '정보 없음'}`",
+            f"- 최근 seatId: `{seat_lock.get('latest_seat_id') if seat_lock.get('latest_seat_id') is not None else '정보 없음'}`",
+        ]
+    )
+    if seat_lock.get("error"):
+        lines.append(f"- 좌석 잠금 이벤트 조회 오류: `{seat_lock.get('error')}`")
+    else:
+        lines.append(
+            "- 해석: `FAILURE_RATE_HIGH`는 좌석 선점 충돌이나 Valkey/서비스 오류 가능성을, "
+            "`COMPETITION_DETECTED`는 중복 잠금 시도처럼 경쟁 상황이 관측됐음을 의미합니다. "
+            "`NO_EVENTS`는 조회 기간에 좌석 잠금 이벤트 표본이 없다는 뜻입니다."
+        )
+    lines.extend(
+        [
+            "",
             "## Kafka 파이프라인 상태",
             "",
             f"- 상태: `{kafka_health.get('status', 'UNKNOWN')}`",
@@ -1189,6 +1353,18 @@ def main() -> None:
         "--skip-kafka-pipeline-health",
         action="store_true",
         help="Do not query Athena event lake counts for the Kafka pipeline health section.",
+    )
+    parser.add_argument("--seat-lock-producer", default="seat-lock-service")
+    parser.add_argument(
+        "--seat-lock-failure-rate-threshold-percent",
+        type=int,
+        default=60,
+        help="Warn when seat lock failure rate is greater than this percent.",
+    )
+    parser.add_argument(
+        "--skip-seat-lock-summary",
+        action="store_true",
+        help="Do not query Athena event lake counts for the seat-lock event section.",
     )
     parser.add_argument(
         "--producer-filter",
@@ -1294,6 +1470,24 @@ def main() -> None:
             args.kafka_stale_after_hours,
         )
     )
+    seat_lock = (
+        SeatLockSummary(
+            producer=args.seat_lock_producer,
+            failure_rate_threshold_percent=(
+                args.seat_lock_failure_rate_threshold_percent
+            ),
+        )
+        if args.skip_seat_lock_summary
+        else collect_seat_lock_summary(
+            args.game_id,
+            args.lookback_days,
+            args.database,
+            args.workgroup,
+            args.region,
+            args.seat_lock_producer,
+            args.seat_lock_failure_rate_threshold_percent,
+        )
+    )
     report = calculate_recommendation(
         inputs,
         args.minimum_samples,
@@ -1301,6 +1495,7 @@ def main() -> None:
         sqs_worker=sqs_worker,
         valkey_status=valkey_status,
         kafka_pipeline_health=kafka_pipeline_health,
+        seat_lock=seat_lock,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 REQUIRED_FIELDS = {
@@ -44,6 +44,14 @@ SUPPORTED_EVENT_TYPES = {
     "SEAT_LOCKED",
     "SEAT_LOCK_FAILED",
     "SEAT_UNLOCKED",
+    "KAFKA_PRODUCE_FAILED",
+    "KAFKA_S3_SINK_DELAYED",
+    "KAFKA_EVENT_SKIPPED",
+    "KAFKA_EVENT_INVALID",
+    "KAFKA_S3_SINK_COMPLETED",
+    "SQS_WORKER_STATUS_RECORDED",
+    "SQS_BACKLOG_DETECTED",
+    "SQS_DLQ_DETECTED",
 }
 
 
@@ -140,6 +148,61 @@ def put_s3_event(
         )
     finally:
         path.unlink(missing_ok=True)
+
+
+def build_sink_audit_event(
+    result: SinkResult,
+    topics: list[str],
+    producer_filter: set[str],
+    started_at: datetime,
+    finished_at: datetime,
+    dry_run: bool,
+) -> dict[str, Any]:
+    return {
+        "eventId": str(uuid4()),
+        "eventType": "KAFKA_S3_SINK_COMPLETED",
+        "schemaVersion": 1,
+        "occurredAt": finished_at.isoformat().replace("+00:00", "Z"),
+        "producer": "kafka-s3-sink",
+        "aggregateType": "INFRA_AUDIT",
+        "aggregateId": f"kafka-s3-sink:{int(started_at.timestamp())}",
+        "gameId": None,
+        "userKey": None,
+        "traceId": None,
+        "payload": {
+            "status": "COMPLETED",
+            "accepted": result.accepted,
+            "written": result.written,
+            "skipped": result.skipped,
+            "invalid": result.invalid,
+            "durationSeconds": round((finished_at - started_at).total_seconds(), 3),
+            "dryRun": dry_run,
+            "topics": ",".join(topics),
+            "reason": (
+                "Kafka topic messages were drained into the S3/Athena event lake."
+            ),
+        },
+    }
+
+
+def emit_sink_audit_event(
+    result: SinkResult,
+    args: argparse.Namespace,
+    producers: set[str],
+    started_at: datetime,
+    finished_at: datetime,
+) -> None:
+    event = build_sink_audit_event(
+        result,
+        args.topics,
+        producers,
+        started_at,
+        finished_at,
+        args.dry_run,
+    )
+    _, occurred_at = parse_event(json.dumps(event))
+    key = object_key(event, occurred_at, args.prefix)
+    put_s3_event(event, key, args.bucket, args.region, args.dry_run)
 
 
 def wait_for_pod_ready(pod_name: str, namespace: str, timeout_seconds: int) -> None:
@@ -342,9 +405,15 @@ def main() -> None:
     parser.add_argument("--ready-timeout-seconds", type=int, default=120)
     parser.add_argument("--max-seconds", type=int, default=90)
     parser.add_argument("--keep-pod", action="store_true")
+    parser.add_argument(
+        "--emit-audit-event",
+        action="store_true",
+        help="Write a KAFKA_S3_SINK_COMPLETED event into the same S3 event lake.",
+    )
     args = parser.parse_args()
 
     producers = {item.strip() for item in args.producer_in.split(",") if item.strip()}
+    started_at = datetime.now(timezone.utc)
     if args.consume:
         if not args.bootstrap_server:
             parser.error("--bootstrap-server is required with --consume")
@@ -353,6 +422,8 @@ def main() -> None:
         lines = Path(args.input_jsonl).read_text(encoding="utf-8").splitlines()
 
     result = sink_lines(lines, args.bucket, args.prefix, args.region, args.dry_run, producers)
+    if args.emit_audit_event:
+        emit_sink_audit_event(result, args, producers, started_at, datetime.now(timezone.utc))
     print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
 
 

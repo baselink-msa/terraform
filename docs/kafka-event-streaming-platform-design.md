@@ -457,6 +457,65 @@ KAFKA_S3_SINK_COMPLETED
 - `infra.audit.events` 기반 `KAFKA_PRODUCE_FAILED`, `KAFKA_EVENT_INVALID`, `KAFKA_EVENT_SKIPPED`, `KAFKA_S3_SINK_COMPLETED`가 적재되면 같은 섹션에 함께 표시할 수 있게 구조를 열어두었습니다.
 - 아직 MSK broker metric, consumer lag, 상시 sink 지연을 직접 조회하는 단계는 아닙니다. 현재는 Capacity Advisor가 실제로 사용하는 S3/Athena event lake 기준의 pipeline health입니다.
 
+### 8.4 Capacity Advisor seat-lock 이벤트 섹션
+
+2026-06-29 기준 Capacity Advisor는 Athena event lake에서 `seat-lock-service`가 발행한 좌석 잠금 이벤트를 조회해 별도 섹션으로 표시합니다.
+
+포함 이벤트:
+
+```text
+SEAT_LOCK_REQUESTED
+SEAT_LOCKED
+SEAT_LOCK_FAILED
+SEAT_UNLOCKED
+```
+
+리포트가 보여주는 값:
+
+- 좌석 잠금 요청 수
+- 좌석 잠금 성공 수
+- 좌석 잠금 실패 수
+- 좌석 잠금 해제 수
+- 잠금 성공률
+- 잠금 실패율
+- 잠금 해제율
+- 최신 seat-lock 이벤트
+
+의미:
+
+- Valkey CloudWatch metric은 좌석 잠금 계층의 인프라 상태를 보여줍니다.
+- seat-lock 이벤트 섹션은 실제 서비스 흐름에서 좌석 잠금이 성공했는지, 경쟁/중복 시도가 있었는지 보여줍니다.
+- 두 정보를 함께 보면 “Valkey는 정상인데 좌석 잠금 실패가 많은지”, “Valkey 리소스 압박과 좌석 잠금 실패가 같이 증가하는지”를 구분할 수 있습니다.
+
+### 8.5 infra.audit.events 1차 기반
+
+Kafka/SQS 파이프라인 자체 상태도 분석 가능한 이벤트로 남기기 위해 event lake 허용 event type을 확장했습니다.
+
+지원 이벤트:
+
+```text
+KAFKA_PRODUCE_FAILED
+KAFKA_S3_SINK_DELAYED
+KAFKA_EVENT_SKIPPED
+KAFKA_EVENT_INVALID
+KAFKA_S3_SINK_COMPLETED
+SQS_WORKER_STATUS_RECORDED
+SQS_BACKLOG_DETECTED
+SQS_DLQ_DETECTED
+```
+
+현재 1차 구현:
+
+- `kafka_s3_sink.py --emit-audit-event`로 sink 실행 완료를 `KAFKA_S3_SINK_COMPLETED` 이벤트로 기록할 수 있습니다.
+- `record_sqs_worker_audit.py`로 SQS 원본 큐/DLQ 상태를 audit event로 기록할 수 있습니다.
+- Capacity Advisor의 Kafka pipeline health는 이 audit event type들을 같은 Athena table에서 조회할 수 있습니다.
+
+남은 확장:
+
+- backend producer 실패를 `KAFKA_PRODUCE_FAILED`로 자동 발행
+- 상시 Kafka sink 또는 EventBridge schedule로 SQS worker 상태 주기 기록
+- `infra.audit.events` topic에 producer를 붙여 audit event도 Kafka topic을 거쳐 S3/Athena에 적재
+
 리포트 활용:
 
 - Kafka producer 실패 수

@@ -95,6 +95,26 @@ class KafkaS3SinkTest(unittest.TestCase):
         self.assertIn("event_type=SEAT_LOCKED", key)
         self.assertIn("game_id=9001", key)
 
+    def test_builds_sink_completed_audit_event(self):
+        result = sink.SinkResult(accepted=5, written=5, skipped=1, invalid=0)
+        event = sink.build_sink_audit_event(
+            result,
+            topics=["reservation.lifecycle.events"],
+            producer_filter={"seat-lock-service"},
+            started_at=sink.datetime.fromisoformat("2026-06-29T00:00:00+00:00"),
+            finished_at=sink.datetime.fromisoformat("2026-06-29T00:00:02+00:00"),
+            dry_run=False,
+        )
+
+        parsed, occurred_at = sink.parse_event(json.dumps(event))
+        key = sink.object_key(parsed, occurred_at, "ticket-events")
+
+        self.assertEqual("KAFKA_S3_SINK_COMPLETED", parsed["eventType"])
+        self.assertEqual("kafka-s3-sink", parsed["producer"])
+        self.assertEqual(5, parsed["payload"]["written"])
+        self.assertIn("event_type=KAFKA_S3_SINK_COMPLETED", key)
+        self.assertIn("game_id=unknown", key)
+
     def test_dry_run_skips_non_selected_producer(self):
         lines = [
             json.dumps(self.event(producer="ticket-service")),
