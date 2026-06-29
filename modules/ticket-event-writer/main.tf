@@ -314,7 +314,7 @@ resource "aws_glue_catalog_table" "ticket_events" {
 
     columns {
       name = "payload"
-      type = "struct<initialRank:bigint,policyMaxEnterPerMinute:bigint,waitingSeconds:double,effectiveEnterPerMinute:bigint,dbPressureLevel:string,dbThrottlePercent:double,reservationId:bigint,seatId:bigint,status:string,pendingDurationSeconds:double>"
+      type = "struct<initialRank:bigint,policyMaxEnterPerMinute:bigint,waitingSeconds:double,effectiveEnterPerMinute:bigint,dbPressureLevel:string,dbThrottlePercent:double,reservationId:bigint,seatId:bigint,status:string,pendingDurationSeconds:double,reason:string,currentDbConnections:bigint,dbConnectionBudget:bigint,currentReadyPodCount:bigint,projectedReadyPodCount:bigint,baseEnterPerMinute:bigint,projectedEnterPerMinute:bigint,currentMinuteRemainingSlots:bigint,canEnter:boolean>"
     }
   }
 }

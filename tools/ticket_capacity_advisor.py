@@ -29,6 +29,20 @@ class CapacityInputs:
     producer_filters: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class CapacitySignalSummary:
+    throttle_applied: int = 0
+    stop_applied: int = 0
+    throttle_recovered: int = 0
+    latest_event_type: str | None = None
+    latest_occurred_at: str | None = None
+    latest_db_pressure_level: str | None = None
+    latest_current_db_connections: int | None = None
+    latest_db_connection_budget: int | None = None
+    latest_db_throttle_percent: int | None = None
+    latest_effective_enter_per_minute: int | None = None
+
+
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
     if connection_count >= budget:
         return "STOP", 0
@@ -45,6 +59,7 @@ def calculate_recommendation(
     inputs: CapacityInputs,
     minimum_samples: int = 20,
     safety_factor: float = 0.8,
+    capacity_signals: CapacitySignalSummary | None = None,
 ) -> dict[str, Any]:
     pressure_level, throttle_percent = db_pressure(
         inputs.current_db_connections, inputs.db_connection_budget
@@ -76,6 +91,7 @@ def calculate_recommendation(
             "reservationRequested": inputs.reservation_requested,
             "reservationConfirmed": inputs.reservation_confirmed,
         },
+        "capacitySignals": asdict(capacity_signals or CapacitySignalSummary()),
     }
     if insufficient:
         return {
@@ -219,6 +235,22 @@ def _run_athena_query(query: str, database: str, workgroup: str, region: str) ->
     return [item.get("VarCharValue", "") for item in rows[1]["Data"]]
 
 
+def _producer_condition(
+    producer_filter: str | None = None,
+    producer_filters: tuple[str, ...] = (),
+) -> str:
+    if producer_filter and producer_filters:
+        raise ValueError("Use either producer_filter or producer_filters, not both")
+
+    if producer_filter:
+        return "AND producer = '" + producer_filter.replace("'", "''") + "'"
+    if producer_filters:
+        escaped = [producer.replace("'", "''") for producer in producer_filters]
+        quoted = ", ".join(f"'{producer}'" for producer in escaped)
+        return f"AND producer IN ({quoted})"
+    return ""
+
+
 def collect_athena_inputs(
     game_id: int,
     lookback_days: int,
@@ -231,16 +263,7 @@ def collect_athena_inputs(
     producer_filters: tuple[str, ...] = (),
 ) -> CapacityInputs:
     start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
-    if producer_filter and producer_filters:
-        raise ValueError("Use either producer_filter or producer_filters, not both")
-
-    producer_condition = ""
-    if producer_filter:
-        producer_condition = "AND producer = '" + producer_filter.replace("'", "''") + "'"
-    elif producer_filters:
-        escaped = [producer.replace("'", "''") for producer in producer_filters]
-        quoted = ", ".join(f"'{producer}'" for producer in escaped)
-        producer_condition = f"AND producer IN ({quoted})"
+    producer_condition = _producer_condition(producer_filter, producer_filters)
     query = f"""
     WITH base AS (
       SELECT *
@@ -289,8 +312,74 @@ def collect_athena_inputs(
     )
 
 
+def _optional_int(value: str) -> int | None:
+    if value == "":
+        return None
+    return int(float(value))
+
+
+def collect_capacity_signals(
+    game_id: int,
+    lookback_days: int,
+    database: str,
+    workgroup: str,
+    region: str,
+    producer_filter: str | None = None,
+    producer_filters: tuple[str, ...] = (),
+) -> CapacitySignalSummary:
+    start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
+    producer_condition = _producer_condition(producer_filter, producer_filters)
+    query = f"""
+    WITH signals AS (
+      SELECT *
+      FROM ticket_events
+      WHERE event_date >= '{start_date.isoformat()}'
+        AND gameId = {game_id}
+        AND event_type IN (
+          'ADMISSION_THROTTLE_APPLIED',
+          'ADMISSION_STOP_APPLIED',
+          'ADMISSION_THROTTLE_RECOVERED'
+        )
+        {producer_condition}
+    )
+    SELECT
+      count_if(event_type = 'ADMISSION_THROTTLE_APPLIED'),
+      count_if(event_type = 'ADMISSION_STOP_APPLIED'),
+      count_if(event_type = 'ADMISSION_THROTTLE_RECOVERED'),
+      coalesce(max_by(event_type, from_iso8601_timestamp(occurredAt)), ''),
+      coalesce(max_by(occurredAt, from_iso8601_timestamp(occurredAt)), ''),
+      coalesce(max_by(payload.dbPressureLevel, from_iso8601_timestamp(occurredAt)), ''),
+      coalesce(CAST(max_by(payload.currentDbConnections, from_iso8601_timestamp(occurredAt)) AS varchar), ''),
+      coalesce(CAST(max_by(payload.dbConnectionBudget, from_iso8601_timestamp(occurredAt)) AS varchar), ''),
+      coalesce(CAST(max_by(payload.dbThrottlePercent, from_iso8601_timestamp(occurredAt)) AS varchar), ''),
+      coalesce(CAST(max_by(payload.effectiveEnterPerMinute, from_iso8601_timestamp(occurredAt)) AS varchar), '')
+    FROM signals
+    """
+    values = _run_athena_query(query, database, workgroup, region)
+    if len(values) != 10:
+        raise RuntimeError("Athena capacity signal query returned an unexpected result")
+    return CapacitySignalSummary(
+        throttle_applied=int(values[0] or 0),
+        stop_applied=int(values[1] or 0),
+        throttle_recovered=int(values[2] or 0),
+        latest_event_type=values[3] or None,
+        latest_occurred_at=values[4] or None,
+        latest_db_pressure_level=values[5] or None,
+        latest_current_db_connections=_optional_int(values[6]),
+        latest_db_connection_budget=_optional_int(values[7]),
+        latest_db_throttle_percent=_optional_int(values[8]),
+        latest_effective_enter_per_minute=_optional_int(values[9]),
+    )
+
+
 def markdown_report(report: dict[str, Any]) -> str:
     recommendation = report.get("recommendedPolicyEnterPerMinute")
+    signals = report.get("capacitySignals") or {}
+    signal_total = (
+        int(signals.get("throttle_applied") or 0)
+        + int(signals.get("stop_applied") or 0)
+        + int(signals.get("throttle_recovered") or 0)
+    )
     lines = [
         f"# Game {report['gameId']} 안전 입장량 보고서",
         "",
@@ -306,6 +395,43 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(f"- {reason}" for reason in report["reasons"])
+    lines.extend(
+        [
+            "",
+            "## 최근 감속/복구 신호",
+            "",
+        ]
+    )
+    if signal_total == 0:
+        lines.append("- 조회 기간 동안 Kafka `capacity.signals` 감속/복구 이벤트가 없습니다.")
+    else:
+        lines.extend(
+            [
+                f"- 감속 적용: `{signals.get('throttle_applied', 0)}회`",
+                f"- 입장 중지: `{signals.get('stop_applied', 0)}회`",
+                f"- 정상 복구: `{signals.get('throttle_recovered', 0)}회`",
+            ]
+        )
+        if signals.get("latest_event_type"):
+            connection_text = "정보 없음"
+            if signals.get("latest_current_db_connections") is not None:
+                connection_text = (
+                    f"{signals.get('latest_current_db_connections')}/"
+                    f"{signals.get('latest_db_connection_budget')}"
+                )
+            lines.extend(
+                [
+                    "",
+                    "### 최근 신호",
+                    "",
+                    f"- 이벤트: `{signals.get('latest_event_type')}`",
+                    f"- 발생 시각: `{signals.get('latest_occurred_at')}`",
+                    f"- DB pressure: `{signals.get('latest_db_pressure_level')}`",
+                    f"- DB connection: `{connection_text}`",
+                    f"- 감속률: `{signals.get('latest_db_throttle_percent')}%`",
+                    f"- 당시 effective 입장량: `{signals.get('latest_effective_enter_per_minute')}명/분`",
+                ]
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -347,7 +473,20 @@ def main() -> None:
         args.producer_filter,
         producer_filters,
     )
-    report = calculate_recommendation(inputs, args.minimum_samples)
+    capacity_signals = collect_capacity_signals(
+        args.game_id,
+        args.lookback_days,
+        args.database,
+        args.workgroup,
+        args.region,
+        args.producer_filter,
+        producer_filters,
+    )
+    report = calculate_recommendation(
+        inputs,
+        args.minimum_samples,
+        capacity_signals=capacity_signals,
+    )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"game-{args.game_id}-capacity"

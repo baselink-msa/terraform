@@ -87,6 +87,38 @@ class CapacityAdvisorTest(unittest.TestCase):
             report["producerFilters"],
         )
 
+    def test_report_includes_capacity_signal_summary(self):
+        signals = advisor.CapacitySignalSummary(
+            throttle_applied=2,
+            stop_applied=1,
+            throttle_recovered=1,
+            latest_event_type="ADMISSION_THROTTLE_RECOVERED",
+            latest_occurred_at="2026-06-29T01:00:00Z",
+            latest_db_pressure_level="NORMAL",
+            latest_current_db_connections=18,
+            latest_db_connection_budget=60,
+            latest_db_throttle_percent=100,
+            latest_effective_enter_per_minute=40,
+        )
+
+        report = advisor.calculate_recommendation(
+            self.inputs(),
+            capacity_signals=signals,
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual(2, report["capacitySignals"]["throttle_applied"])
+        self.assertIn("## 최근 감속/복구 신호", markdown)
+        self.assertIn("ADMISSION_THROTTLE_RECOVERED", markdown)
+        self.assertIn("18/60", markdown)
+
+    def test_report_explains_when_no_capacity_signals_exist(self):
+        report = advisor.calculate_recommendation(self.inputs())
+        markdown = advisor.markdown_report(report)
+
+        self.assertIn("## 최근 감속/복구 신호", markdown)
+        self.assertIn("감속/복구 이벤트가 없습니다", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()
