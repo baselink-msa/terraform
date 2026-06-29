@@ -1548,6 +1548,14 @@ occurred_before: 2026-06-29T09:36:00Z
 | DB 상태 | `NORMAL (19/60)` |
 | Kafka pipeline | `HEALTHY`, events `360` |
 
+Slack Report 수동 실행 검증:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28365901166`
+- generatedAt: `2026-06-29T10:35:56.087184+00:00`
+- Slack 메시지에 분석 시간 범위 `2026-06-29T09:30:00Z ~ 2026-06-29T09:36:00Z`가 표시됐다.
+- Slack 메시지에 추천 정책 `21명/분`, 현재 DB 반영 입장량 `21명/분`, 원시 추천 `21.6명/분`, 운영 하한 `20명/분`이 표시됐다.
+- SQS/Worker, Valkey, Kafka pipeline 상태는 모두 `HEALTHY`였다.
+
 중요 해석:
 
 - 하루치 전체 분석의 안정 확정 처리량 2건/분은 실제 시스템 한계가 아니라, smoke/순차 표본이 섞인 결과다.
@@ -1564,8 +1572,7 @@ occurred_before: 2026-06-29T09:36:00Z
 다음 우선순위:
 
 ```text
-P0. time range filter PR merge 후 Slack Report를 실제 부하 구간으로 수동 실행
-P1. k6 이벤트에 testRunId 추가 후 Advisor testRunId 필터 구현
+P0. k6 이벤트에 testRunId 추가 후 Advisor testRunId 필터 구현
 P1. 조회 API 중심 부하테스트로 Read Replica 필요성 판단
 P1. connection storm 시나리오로 RDS Proxy 필요성 판단
 P2. 발표용 캡처 목록 최종 정리
