@@ -168,6 +168,62 @@ class CapacityAdvisorTest(unittest.TestCase):
 
         self.assertEqual("PROCESSING", status)
 
+    def test_report_includes_valkey_status_summary(self):
+        valkey_status = advisor.ValkeyStatusSummary(
+            cluster_ids=("baselink-dev-redis-001", "baselink-dev-redis-002"),
+            replica_cluster_ids=("baselink-dev-redis-002",),
+            status="HEALTHY",
+            max_engine_cpu_percent=12.5,
+            max_memory_usage_percent=34.1,
+            total_evictions=0,
+            max_replication_lag_seconds=0.0,
+        )
+
+        report = advisor.calculate_recommendation(
+            self.inputs(),
+            valkey_status=valkey_status,
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual("HEALTHY", report["valkeyStatus"]["status"])
+        self.assertIn("## Valkey/좌석 잠금 계층 상태", markdown)
+        self.assertIn("baselink-dev-redis-001", markdown)
+        self.assertIn("12.5%", markdown)
+
+    def test_valkey_status_prioritizes_evictions(self):
+        status = advisor._valkey_status(
+            max_engine_cpu_percent=90.0,
+            max_memory_usage_percent=90.0,
+            total_evictions=1,
+            max_replication_lag_seconds=10.0,
+            cpu_threshold_percent=80,
+            memory_threshold_percent=80,
+            replication_lag_threshold_seconds=5,
+            eviction_threshold=0,
+        )
+
+        self.assertEqual("EVICTIONS_DETECTED", status)
+
+    def test_valkey_status_detects_replication_lag_before_cpu(self):
+        status = advisor._valkey_status(
+            max_engine_cpu_percent=90.0,
+            max_memory_usage_percent=10.0,
+            total_evictions=0,
+            max_replication_lag_seconds=5.0,
+            cpu_threshold_percent=80,
+            memory_threshold_percent=80,
+            replication_lag_threshold_seconds=5,
+            eviction_threshold=0,
+        )
+
+        self.assertEqual("REPLICATION_LAG", status)
+
+    def test_csv_tuple_trims_empty_values(self):
+        self.assertEqual(
+            ("baselink-dev-redis-001", "baselink-dev-redis-002"),
+            advisor._csv_tuple("baselink-dev-redis-001, baselink-dev-redis-002,"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

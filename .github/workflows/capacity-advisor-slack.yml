@@ -78,6 +78,13 @@ jobs:
           echo "SQS_BACKLOG_THRESHOLD=${{ vars.CAPACITY_ADVISOR_SQS_BACKLOG_THRESHOLD || '10' }}" >> "$GITHUB_ENV"
           echo "SQS_OLDEST_AGE_THRESHOLD_SECONDS=${{ vars.CAPACITY_ADVISOR_SQS_OLDEST_AGE_THRESHOLD_SECONDS || '300' }}" >> "$GITHUB_ENV"
           echo "SQS_DLQ_THRESHOLD=${{ vars.CAPACITY_ADVISOR_SQS_DLQ_THRESHOLD || '1' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_CLUSTER_IDS=${{ vars.CAPACITY_ADVISOR_VALKEY_CLUSTER_IDS || 'baselink-dev-redis-001,baselink-dev-redis-002' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_REPLICA_CLUSTER_IDS=${{ vars.CAPACITY_ADVISOR_VALKEY_REPLICA_CLUSTER_IDS || 'baselink-dev-redis-002' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_LOOKBACK_MINUTES=${{ vars.CAPACITY_ADVISOR_VALKEY_LOOKBACK_MINUTES || '15' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_CPU_THRESHOLD_PERCENT=${{ vars.CAPACITY_ADVISOR_VALKEY_CPU_THRESHOLD_PERCENT || '80' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_MEMORY_THRESHOLD_PERCENT=${{ vars.CAPACITY_ADVISOR_VALKEY_MEMORY_THRESHOLD_PERCENT || '80' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS=${{ vars.CAPACITY_ADVISOR_VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS || '5' }}" >> "$GITHUB_ENV"
+          echo "VALKEY_EVICTION_THRESHOLD=${{ vars.CAPACITY_ADVISOR_VALKEY_EVICTION_THRESHOLD || '0' }}" >> "$GITHUB_ENV"
 
       - name: Resolve current DB connections
         shell: bash
@@ -126,7 +133,14 @@ jobs:
             --sqs-dlq-name "${SQS_DLQ_NAME}" \
             --sqs-backlog-threshold "${SQS_BACKLOG_THRESHOLD}" \
             --sqs-oldest-age-threshold-seconds "${SQS_OLDEST_AGE_THRESHOLD_SECONDS}" \
-            --sqs-dlq-threshold "${SQS_DLQ_THRESHOLD}"
+            --sqs-dlq-threshold "${SQS_DLQ_THRESHOLD}" \
+            --valkey-cluster-ids "${VALKEY_CLUSTER_IDS}" \
+            --valkey-replica-cluster-ids "${VALKEY_REPLICA_CLUSTER_IDS}" \
+            --valkey-lookback-minutes "${VALKEY_LOOKBACK_MINUTES}" \
+            --valkey-cpu-threshold-percent "${VALKEY_CPU_THRESHOLD_PERCENT}" \
+            --valkey-memory-threshold-percent "${VALKEY_MEMORY_THRESHOLD_PERCENT}" \
+            --valkey-replication-lag-threshold-seconds "${VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS}" \
+            --valkey-eviction-threshold "${VALKEY_EVICTION_THRESHOLD}"
 
       - name: Send Slack notification
         shell: bash

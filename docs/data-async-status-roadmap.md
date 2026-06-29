@@ -52,7 +52,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
 | 운영 모니터링 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림 경로 정리, Capacity Advisor Slack report workflow 구현 |
 | 발표/Runbook | 진행 중 | 담당 파트 발표 outline, 운영 알림 Runbook, 인수인계 문서 최신화 중 |
-| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, SQS/Worker 상태, Slack report까지 확장 |
+| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, SQS/Worker 상태, Valkey 상태, Slack report까지 확장 |
 
 현재 완성도 판단:
 
@@ -60,7 +60,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | --- | ---: | --- |
 | 팀 핵심 기능 구현 | 약 90% | 데이터 저장·비동기 처리·복구·DB 보호 기능 구현 완료 |
 | 팀 운영 검증·문서 | 약 85% | 운영 알림 문서 최신화 중, 부하 테스트와 일부 실 Slack 캡처가 남음 |
-| 개인 프로젝트 MVP | 약 95% | Kafka→S3/Athena→Capacity Advisor→Slack report 흐름 구현, 부하 데이터 기반 최종 수치가 남음 |
+| 개인 프로젝트 MVP | 약 96% | Kafka→S3/Athena→Capacity Advisor→Slack report 흐름과 SQS/Valkey 상태 반영 구현, 부하 데이터 기반 최종 수치가 남음 |
 | 발표 준비 | 약 75% | 발표 outline과 인수인계 문서 보강 중이며 캡처·아키텍처 그림·리허설 필요 |
 
 ### 2026-06-29 업데이트 요약
@@ -70,7 +70,8 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 - Capacity Advisor Slack report workflow는 구현 완료됐고, 실제 Slack 전송은 `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 가능하다.
 - Kafka 개인 프로젝트는 `ticket.domain.events`, `waiting.operational.events`, `capacity.signals`를 S3/Athena/Capacity Advisor와 연결하는 수준까지 확장됐다.
 - SQS/Worker 처리 상태는 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
-- 다음 고도화 후보는 좌석 잠금/Valkey 이벤트와 Kafka pipeline health를 리포트에 추가하는 것이다.
+- Valkey/좌석 잠금 계층 상태는 CloudWatch metric 기반으로 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
+- 다음 고도화 후보는 seat-lock-service Kafka 이벤트와 Kafka pipeline health를 리포트에 추가하는 것이다.
 
 ## 4. RDS PostgreSQL
 
@@ -218,6 +219,9 @@ Transactional Outbox는 구현·배포·검증을 완료했습니다. 예약 tra
 - 실제 primary 장애 failover 리허설
 - key naming, TTL, 삭제 정책 최신화
 - eviction 발생 시 좌석 lock과 대기열 영향 검증
+- seat-lock-service의 좌석 잠금 성공/실패/만료 이벤트 Kafka 발행
+
+2026-06-29 기준 Capacity Advisor 리포트에는 CloudWatch 기반 Valkey 상태가 1차 반영되었습니다. 현재 리포트는 Valkey `EngineCPUUtilization`, `DatabaseMemoryUsagePercentage`, `Evictions`, `ReplicationLag`를 조회해 `HEALTHY`, `CPU_HIGH`, `MEMORY_HIGH`, `EVICTIONS_DETECTED`, `REPLICATION_LAG`, `UNKNOWN`으로 분류합니다. 다만 좌석 잠금 event 자체를 Kafka로 수집하는 단계는 아직 남아 있습니다.
 
 현재 전송 암호화와 AUTH는 비활성화 상태입니다.
 
