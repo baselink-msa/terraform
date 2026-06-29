@@ -238,13 +238,29 @@ def calculate_recommendation(
 
 
 def _aws_json(arguments: list[str]) -> dict[str, Any]:
+    command = ["aws", *arguments, "--output", "json"]
     completed = subprocess.run(
-        ["aws", *arguments, "--output", "json"],
-        check=True,
+        command,
+        check=False,
         capture_output=True,
         text=True,
     )
-    return json.loads(completed.stdout)
+    if completed.returncode != 0:
+        stderr = " ".join(completed.stderr.split())
+        stdout = " ".join(completed.stdout.split())
+        detail = stderr or stdout or "no output"
+        rendered_command = " ".join(command)
+        raise RuntimeError(
+            f"AWS CLI failed with exit code {completed.returncode}: "
+            f"{rendered_command}: {detail}"
+        )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        rendered_command = " ".join(command)
+        raise RuntimeError(
+            f"AWS CLI returned invalid JSON: {rendered_command}: {exc}"
+        ) from exc
 
 
 def _queue_attributes(queue_name: str, region: str) -> dict[str, int]:

@@ -168,6 +168,24 @@ class CapacityAdvisorTest(unittest.TestCase):
 
         self.assertEqual("PROCESSING", status)
 
+    def test_aws_json_error_includes_cli_stderr(self):
+        original_run = advisor.subprocess.run
+
+        class FailedProcess:
+            returncode = 254
+            stdout = ""
+            stderr = "An error occurred (AccessDenied) when calling the GetQueueAttributes operation"
+
+        def fake_run(*args, **kwargs):
+            return FailedProcess()
+
+        advisor.subprocess.run = fake_run
+        try:
+            with self.assertRaisesRegex(RuntimeError, "AccessDenied"):
+                advisor._aws_json(["sqs", "get-queue-attributes"])
+        finally:
+            advisor.subprocess.run = original_run
+
     def test_report_includes_valkey_status_summary(self):
         valkey_status = advisor.ValkeyStatusSummary(
             cluster_ids=("baselink-dev-redis-001", "baselink-dev-redis-002"),
