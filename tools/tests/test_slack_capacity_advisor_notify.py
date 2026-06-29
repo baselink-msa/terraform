@@ -71,6 +71,36 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
                 "replication_lag_threshold_seconds": 5,
                 "eviction_threshold": 0,
             },
+            "kafkaPipelineHealth": {
+                "status": "HEALTHY",
+                "lookback_days": 1,
+                "expected_producers": ["ticket-service", "waiting-room-service"],
+                "expected_event_types": [
+                    "WAITING_ENTERED",
+                    "ACCESS_TOKEN_ISSUED",
+                    "RESERVATION_REQUESTED",
+                    "RESERVATION_CONFIRMED",
+                ],
+                "total_events": 24,
+                "latest_occurred_at": "2026-06-29T00:59:00Z",
+                "producer_counts": {
+                    "ticket-service": 12,
+                    "waiting-room-service": 12,
+                },
+                "event_type_counts": {
+                    "WAITING_ENTERED": 6,
+                    "ACCESS_TOKEN_ISSUED": 6,
+                    "RESERVATION_REQUESTED": 6,
+                    "RESERVATION_CONFIRMED": 6,
+                },
+                "missing_producers": [],
+                "missing_event_types": [],
+                "producer_failures": 0,
+                "invalid_events": 0,
+                "skipped_events": 0,
+                "sink_completed_events": 1,
+                "stale_after_hours": 24,
+            },
         }
         values.update(overrides)
         return values
@@ -96,6 +126,8 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         self.assertIn("ticket-confirm-queue", text)
         self.assertIn("Valkey/좌석 잠금 계층 상태", text)
         self.assertIn("baselink-dev-redis-001", text)
+        self.assertIn("Kafka 파이프라인 상태", text)
+        self.assertIn("ticket-service=12", text)
 
     def test_payload_explains_when_no_capacity_signals_exist(self):
         report = self.report(
@@ -169,6 +201,51 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         )
 
         self.assertEqual(":large_yellow_circle:", notify.status_emoji(report))
+
+    def test_kafka_producer_failure_uses_incident_emoji(self):
+        report = self.report(
+            kafkaPipelineHealth={
+                "status": "PRODUCER_FAILURE",
+                "total_events": 10,
+                "latest_occurred_at": "2026-06-29T00:59:00Z",
+                "producer_counts": {"ticket-service": 10},
+                "event_type_counts": {"KAFKA_PRODUCE_FAILED": 1},
+                "missing_producers": [],
+                "missing_event_types": [],
+                "producer_failures": 1,
+                "invalid_events": 0,
+                "skipped_events": 0,
+                "sink_completed_events": 0,
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertEqual(":rotating_light:", notify.status_emoji(report))
+        self.assertIn("PRODUCER_FAILURE", text)
+
+    def test_kafka_partial_pipeline_uses_warning_emoji(self):
+        report = self.report(
+            kafkaPipelineHealth={
+                "status": "PARTIAL",
+                "total_events": 12,
+                "latest_occurred_at": "2026-06-29T00:59:00Z",
+                "producer_counts": {"ticket-service": 12},
+                "event_type_counts": {"RESERVATION_REQUESTED": 12},
+                "missing_producers": ["waiting-room-service"],
+                "missing_event_types": ["ACCESS_TOKEN_ISSUED"],
+                "producer_failures": 0,
+                "invalid_events": 0,
+                "skipped_events": 0,
+                "sink_completed_events": 0,
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertEqual(":large_yellow_circle:", notify.status_emoji(report))
+        self.assertIn("waiting-room-service", text)
+        self.assertIn("ACCESS_TOKEN_ISSUED", text)
 
 
 if __name__ == "__main__":

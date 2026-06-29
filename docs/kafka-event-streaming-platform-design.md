@@ -120,6 +120,7 @@ Partition key:
 - 최근 Kafka `capacity.signals` 감속/복구 신호
 - SQS/Worker backlog, DLQ 상태
 - Valkey engine CPU, memory, eviction, replication lag 상태
+- Kafka pipeline health
 
 즉, 현재 구현은 단순히 “Kafka topic을 만들었다”가 아니라 다음 흐름까지 이어져 있다.
 
@@ -207,6 +208,7 @@ Backend event
 - 2026-06-29 기준 `capacity.signals` 감속/복구 이벤트 publish와 Capacity Advisor 리포트 반영 완료
 - 2026-06-29 기준 Capacity Advisor Slack report workflow 구현 완료
 - 2026-06-29 기준 SQS/Worker와 Valkey/좌석 잠금 계층 상태를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
+- 2026-06-29 기준 Athena event lake 기반 Kafka pipeline health를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
 
 생성 완료 topic:
 
@@ -290,6 +292,7 @@ dev에서는 custom consumer가 단순합니다.
 - GitHub Actions 기반 Capacity Advisor Slack report workflow 구현 완료
 - SQS/Worker 상태 섹션 추가 완료
 - Valkey/좌석 잠금 계층 상태 섹션 추가 완료
+- Kafka pipeline health 섹션 추가 완료
 - 기본 schedule은 매일 09:00 KST
 - `workflow_dispatch`로 수동 실행 가능
 - `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret이 없으면 dry-run payload만 출력하고 성공 처리
@@ -433,6 +436,15 @@ KAFKA_EVENT_SKIPPED
 KAFKA_EVENT_INVALID
 KAFKA_S3_SINK_COMPLETED
 ```
+
+2026-06-29 1차 구현 상태:
+
+- Capacity Advisor가 Athena `ticket_events` event lake를 조회해 Kafka pipeline health를 계산합니다.
+- 기대 producer는 기본적으로 `ticket-service`, `waiting-room-service`입니다.
+- 기대 event type은 `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED`, `RESERVATION_REQUESTED`, `RESERVATION_CONFIRMED`입니다.
+- 리포트는 전체 이벤트 수, 최신 이벤트 시각, producer별 count, event type별 count, 누락 producer, 누락 event type을 보여줍니다.
+- `infra.audit.events` 기반 `KAFKA_PRODUCE_FAILED`, `KAFKA_EVENT_INVALID`, `KAFKA_EVENT_SKIPPED`, `KAFKA_S3_SINK_COMPLETED`가 적재되면 같은 섹션에 함께 표시할 수 있게 구조를 열어두었습니다.
+- 아직 MSK broker metric, consumer lag, 상시 sink 지연을 직접 조회하는 단계는 아닙니다. 현재는 Capacity Advisor가 실제로 사용하는 S3/Athena event lake 기준의 pipeline health입니다.
 
 리포트 활용:
 

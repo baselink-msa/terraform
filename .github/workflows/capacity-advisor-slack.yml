@@ -85,6 +85,9 @@ jobs:
           echo "VALKEY_MEMORY_THRESHOLD_PERCENT=${{ vars.CAPACITY_ADVISOR_VALKEY_MEMORY_THRESHOLD_PERCENT || '80' }}" >> "$GITHUB_ENV"
           echo "VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS=${{ vars.CAPACITY_ADVISOR_VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS || '5' }}" >> "$GITHUB_ENV"
           echo "VALKEY_EVICTION_THRESHOLD=${{ vars.CAPACITY_ADVISOR_VALKEY_EVICTION_THRESHOLD || '0' }}" >> "$GITHUB_ENV"
+          echo "KAFKA_EXPECTED_PRODUCERS=${{ vars.CAPACITY_ADVISOR_KAFKA_EXPECTED_PRODUCERS || inputs.producer_in || vars.CAPACITY_ADVISOR_PRODUCER_IN || 'ticket-service,waiting-room-service' }}" >> "$GITHUB_ENV"
+          echo "KAFKA_EXPECTED_EVENT_TYPES=${{ vars.CAPACITY_ADVISOR_KAFKA_EXPECTED_EVENT_TYPES || 'WAITING_ENTERED,ACCESS_TOKEN_ISSUED,RESERVATION_REQUESTED,RESERVATION_CONFIRMED' }}" >> "$GITHUB_ENV"
+          echo "KAFKA_STALE_AFTER_HOURS=${{ vars.CAPACITY_ADVISOR_KAFKA_STALE_AFTER_HOURS || '24' }}" >> "$GITHUB_ENV"
 
       - name: Resolve current DB connections
         shell: bash
@@ -140,7 +143,10 @@ jobs:
             --valkey-cpu-threshold-percent "${VALKEY_CPU_THRESHOLD_PERCENT}" \
             --valkey-memory-threshold-percent "${VALKEY_MEMORY_THRESHOLD_PERCENT}" \
             --valkey-replication-lag-threshold-seconds "${VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS}" \
-            --valkey-eviction-threshold "${VALKEY_EVICTION_THRESHOLD}"
+            --valkey-eviction-threshold "${VALKEY_EVICTION_THRESHOLD}" \
+            --kafka-expected-producers "${KAFKA_EXPECTED_PRODUCERS}" \
+            --kafka-expected-event-types "${KAFKA_EXPECTED_EVENT_TYPES}" \
+            --kafka-stale-after-hours "${KAFKA_STALE_AFTER_HOURS}"
 
       - name: Send Slack notification
         shell: bash

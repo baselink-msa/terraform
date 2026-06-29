@@ -190,6 +190,36 @@ class CapacityAdvisorTest(unittest.TestCase):
         self.assertIn("baselink-dev-redis-001", markdown)
         self.assertIn("12.5%", markdown)
 
+    def test_report_includes_kafka_pipeline_health_summary(self):
+        kafka_health = advisor.KafkaPipelineHealthSummary(
+            status="HEALTHY",
+            lookback_days=1,
+            total_events=24,
+            latest_occurred_at="not-a-date",
+            producer_counts={"ticket-service": 12, "waiting-room-service": 12},
+            event_type_counts={
+                "WAITING_ENTERED": 6,
+                "ACCESS_TOKEN_ISSUED": 6,
+                "RESERVATION_REQUESTED": 6,
+                "RESERVATION_CONFIRMED": 6,
+            },
+            producer_failures=0,
+            invalid_events=0,
+            skipped_events=0,
+            sink_completed_events=1,
+        )
+
+        report = advisor.calculate_recommendation(
+            self.inputs(),
+            kafka_pipeline_health=kafka_health,
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual("HEALTHY", report["kafkaPipelineHealth"]["status"])
+        self.assertIn("## Kafka 파이프라인 상태", markdown)
+        self.assertIn("ticket-service=12", markdown)
+        self.assertIn("RESERVATION_CONFIRMED=6", markdown)
+
     def test_valkey_status_prioritizes_evictions(self):
         status = advisor._valkey_status(
             max_engine_cpu_percent=90.0,
@@ -217,6 +247,45 @@ class CapacityAdvisorTest(unittest.TestCase):
         )
 
         self.assertEqual("REPLICATION_LAG", status)
+
+    def test_kafka_pipeline_status_prioritizes_producer_failure(self):
+        status = advisor._kafka_pipeline_status(
+            total_events=20,
+            missing_producers=(),
+            missing_event_types=(),
+            latest_occurred_at="not-a-date",
+            producer_failures=1,
+            invalid_events=0,
+            stale_after_hours=24,
+        )
+
+        self.assertEqual("PRODUCER_FAILURE", status)
+
+    def test_kafka_pipeline_status_detects_partial_event_lake(self):
+        status = advisor._kafka_pipeline_status(
+            total_events=20,
+            missing_producers=("waiting-room-service",),
+            missing_event_types=("ACCESS_TOKEN_ISSUED",),
+            latest_occurred_at="not-a-date",
+            producer_failures=0,
+            invalid_events=0,
+            stale_after_hours=24,
+        )
+
+        self.assertEqual("PARTIAL", status)
+
+    def test_kafka_pipeline_status_detects_no_events(self):
+        status = advisor._kafka_pipeline_status(
+            total_events=0,
+            missing_producers=("ticket-service",),
+            missing_event_types=("RESERVATION_CONFIRMED",),
+            latest_occurred_at=None,
+            producer_failures=0,
+            invalid_events=0,
+            stale_after_hours=24,
+        )
+
+        self.assertEqual("NO_EVENTS", status)
 
     def test_csv_tuple_trims_empty_values(self):
         self.assertEqual(
