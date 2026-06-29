@@ -131,6 +131,14 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
                 "관측 입장량 상한",
                 f"{_value(calculation.get('averageObservedEffectiveEnterPerMinute'))}명/분",
             ),
+            (
+                "원시 추천",
+                f"{_value(calculation.get('rawRecommendedPolicyEnterPerMinute'))}명/분",
+            ),
+            (
+                "운영 하한",
+                f"{_value(calculation.get('policyFloorGuardrail'))}명/분",
+            ),
         ]
     calculation_text = " / ".join(
         f"{label} `{value}`" for label, value in calculation_items

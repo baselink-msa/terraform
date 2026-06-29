@@ -213,6 +213,7 @@ Backend event
 - 2026-06-29 기준 `seat-lock-service` 좌석 잠금 이벤트 Kafka publish와 Kafka→S3 sink 허용 event type 반영 완료
 - 2026-06-29 기준 `SQS_WORKER_STATUS_RECORDED`, `KAFKA_S3_SINK_COMPLETED` audit event를 S3/Athena event lake와 Slack report에서 검증 완료
 - 2026-06-29 기준 실제 k6 부하테스트 이벤트 표본으로 Capacity Advisor `HIGH` 신뢰도 재검증 완료
+- 2026-06-29 기준 Capacity Advisor에 minimum policy floor와 max decrease guardrail을 추가해 1명/분 급락 문제를 20명/분 운영 추천으로 보정 완료
 
 생성 완료 topic:
 
