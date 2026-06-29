@@ -924,3 +924,26 @@ audit event 반영 후 Capacity Advisor 로컬 재실행 결과:
 - Capacity Advisor가 단순 입장량 추천을 넘어 SQS, Valkey, Kafka, seat-lock, infra audit event까지 함께 보는 운영 리포트로 확장되었다.
 - Slack 메시지 하나로 운영자가 추천 입장량과 주변 인프라 상태를 함께 볼 수 있다.
 - 발표에서는 “운영 의사결정용 리포트”와 “장애 알림”을 분리해 설명할 수 있다.
+
+### Slack report 재실행으로 audit event 반영 확인
+
+`infra.audit` 이벤트 적재 후 Capacity Advisor Slack Report를 다시 수동 실행했다.
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28361550976`
+- generatedAt: `2026-06-29T09:17:22.831640+00:00`
+
+Slack 메시지에서 확인한 Kafka pipeline health:
+
+```text
+상태 HEALTHY / events 91 / latest 2026-06-29T09:11:31.944598Z
+producer counts kafka-s3-sink=1, seat-lock-service=5, sqs-worker-audit-recorder=1, ticket-service=42, waiting-room-service=42
+event type counts ACCESS_TOKEN_ISSUED=21, KAFKA_S3_SINK_COMPLETED=1, RESERVATION_CONFIRMED=21, RESERVATION_REQUESTED=21, SEAT_LOCKED=1, SEAT_LOCK_FAILED=1, SEAT_LOCK_REQUESTED=2, SEAT_UNLOCKED=1, SQS_WORKER_STATUS_RECORDED=1, WAITING_ENTERED=21
+producer failures 0 / invalid 0 / skipped 0 / sink completed 1
+```
+
+최종 확인:
+
+- `KAFKA_S3_SINK_COMPLETED=1`이 Slack 메시지에 표시되었다.
+- `SQS_WORKER_STATUS_RECORDED=1`이 Slack 메시지에 표시되었다.
+- `sink completed 1`이 표시되어 Kafka S3 sink 실행 완료 audit event가 Capacity Advisor 리포트까지 연결됐다.
+- 따라서 `infra.audit` 1차 기반은 S3/Athena 조회뿐 아니라 Slack 운영 리포트 반영까지 검증 완료됐다.
