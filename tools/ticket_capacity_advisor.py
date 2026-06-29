@@ -283,7 +283,6 @@ def _queue_attributes(queue_name: str, region: str) -> dict[str, int]:
             "--attribute-names",
             "ApproximateNumberOfMessages",
             "ApproximateNumberOfMessagesNotVisible",
-            "ApproximateAgeOfOldestMessage",
             "--region",
             region,
         ]
@@ -294,7 +293,7 @@ def _queue_attributes(queue_name: str, region: str) -> dict[str, int]:
         "not_visible": int(
             attributes.get("ApproximateNumberOfMessagesNotVisible", 0)
         ),
-        "oldest_age": int(attributes.get("ApproximateAgeOfOldestMessage", 0)),
+        "oldest_age": _sqs_oldest_message_age(queue_name, region),
     }
 
 
@@ -408,6 +407,23 @@ def _max_stat(datapoints: list[dict[str, Any]], statistic: str) -> float:
 
 def _sum_stat(datapoints: list[dict[str, Any]], statistic: str) -> float:
     return sum(float(point[statistic]) for point in datapoints if statistic in point)
+
+
+def _sqs_oldest_message_age(
+    queue_name: str,
+    region: str,
+    lookback_minutes: int = 15,
+) -> int:
+    datapoints = _cloudwatch_metric_statistics(
+        namespace="AWS/SQS",
+        metric_name="ApproximateAgeOfOldestMessage",
+        dimensions={"QueueName": queue_name},
+        region=region,
+        lookback_minutes=lookback_minutes,
+        statistics=("Maximum",),
+        period=60,
+    )
+    return int(_max_stat(datapoints, "Maximum"))
 
 
 def _valkey_status(

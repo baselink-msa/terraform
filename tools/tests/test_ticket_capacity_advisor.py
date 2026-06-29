@@ -186,6 +186,73 @@ class CapacityAdvisorTest(unittest.TestCase):
         finally:
             advisor.subprocess.run = original_run
 
+    def test_queue_attributes_reads_oldest_age_from_cloudwatch_metric(self):
+        original_aws_json = advisor._aws_json
+        original_oldest_age = advisor._sqs_oldest_message_age
+        calls = []
+
+        def fake_aws_json(arguments):
+            calls.append(arguments)
+            if arguments[:2] == ["sqs", "get-queue-url"]:
+                return {
+                    "QueueUrl": "https://sqs.ap-northeast-2.amazonaws.com/740831361032/ticket-confirm-queue"
+                }
+            if arguments[:2] == ["sqs", "get-queue-attributes"]:
+                return {
+                    "Attributes": {
+                        "ApproximateNumberOfMessages": "2",
+                        "ApproximateNumberOfMessagesNotVisible": "1",
+                    }
+                }
+            self.fail(f"unexpected aws call: {arguments}")
+
+        def fake_oldest_age(queue_name, region):
+            self.assertEqual("ticket-confirm-queue", queue_name)
+            self.assertEqual("ap-northeast-2", region)
+            return 42
+
+        advisor._aws_json = fake_aws_json
+        advisor._sqs_oldest_message_age = fake_oldest_age
+        try:
+            attributes = advisor._queue_attributes(
+                "ticket-confirm-queue", "ap-northeast-2"
+            )
+        finally:
+            advisor._aws_json = original_aws_json
+            advisor._sqs_oldest_message_age = original_oldest_age
+
+        self.assertEqual(
+            {"visible": 2, "not_visible": 1, "oldest_age": 42},
+            attributes,
+        )
+        get_attributes_call = calls[1]
+        self.assertNotIn("ApproximateAgeOfOldestMessage", get_attributes_call)
+
+    def test_sqs_oldest_message_age_uses_cloudwatch_metric(self):
+        original_cloudwatch = advisor._cloudwatch_metric_statistics
+
+        def fake_cloudwatch(**kwargs):
+            self.assertEqual("AWS/SQS", kwargs["namespace"])
+            self.assertEqual(
+                "ApproximateAgeOfOldestMessage", kwargs["metric_name"]
+            )
+            self.assertEqual(
+                {"QueueName": "ticket-confirm-queue"}, kwargs["dimensions"]
+            )
+            self.assertEqual("ap-northeast-2", kwargs["region"])
+            self.assertEqual(("Maximum",), kwargs["statistics"])
+            return [{"Maximum": 17.0}]
+
+        advisor._cloudwatch_metric_statistics = fake_cloudwatch
+        try:
+            age = advisor._sqs_oldest_message_age(
+                "ticket-confirm-queue", "ap-northeast-2"
+            )
+        finally:
+            advisor._cloudwatch_metric_statistics = original_cloudwatch
+
+        self.assertEqual(17, age)
+
     def test_report_includes_valkey_status_summary(self):
         valkey_status = advisor.ValkeyStatusSummary(
             cluster_ids=("baselink-dev-redis-001", "baselink-dev-redis-002"),

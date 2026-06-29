@@ -129,9 +129,11 @@ SQS status troubleshooting:
 - `UNKNOWN` means the report could not query SQS queue attributes.
 - The report includes the AWS CLI exit code and stderr so the next run can show
   whether the cause is queue name, region, or IAM permission.
+- Queue depth is read from SQS queue attributes. Oldest message age is read from
+  the CloudWatch `AWS/SQS` metric `ApproximateAgeOfOldestMessage`.
 - Check `CAPACITY_ADVISOR_SQS_SOURCE_QUEUE_NAME`,
   `CAPACITY_ADVISOR_SQS_DLQ_NAME`, and the GitHub Actions role permissions
-  `sqs:GetQueueUrl` / `sqs:GetQueueAttributes`.
+  `sqs:GetQueueUrl` / `sqs:GetQueueAttributes` / `cloudwatch:GetMetricStatistics`.
 
 `CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS`를 지정하지 않으면 workflow가 CloudWatch `AWS/RDS DatabaseConnections` 최근 값을 조회합니다.
 
