@@ -1177,3 +1177,66 @@ OK
 4. kafka_s3_sink.py --emit-audit-event를 실제 sink 실행에 붙여 KAFKA_S3_SINK_COMPLETED 적재 확인
 5. 부하테스트로 실제 동시성 표본을 만든 뒤 Capacity Advisor 추천값 재검증
 ```
+
+## 2026-06-29 추가 handoff: Slack seat-lock/infra audit 검증 완료
+
+PR merge와 `Terraform Apply Dev` 완료 후 Capacity Advisor Slack Report를 수동 실행했다.
+
+Slack report:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28361099309`
+- 상태: `RECOMMENDED`
+- 신뢰도: `MEDIUM`
+- 현재 정책: `40명/분`
+- 추천 정책: `1명/분`
+- DB 상태: `NORMAL (16/60)`
+- SQS/Worker: `HEALTHY`
+- Valkey: `HEALTHY`
+- Kafka pipeline: `HEALTHY`
+
+새로 확인한 seat-lock Slack 섹션:
+
+```text
+좌석 잠금 이벤트 상태
+상태 COMPETITION_DETECTED / producer seat-lock-service
+요청 2 성공 1 실패 1 해제 1
+성공률 50.0% / 실패율 50.0% / 해제율 100.0%
+latest SEAT_UNLOCKED at 2026-06-29T07:57:30.567262716Z / seat 900819838
+```
+
+해석:
+
+- `COMPETITION_DETECTED`는 좌석 잠금 계층 장애가 아니라 중복 잠금 시도/좌석 선점 경쟁이 관측됐다는 뜻이다.
+- 현재 표본은 E2E 검증용이라 실패율이 높게 보일 수 있다.
+- 실제 부하테스트에서는 이 값을 좌석 잠금 경쟁률, Valkey 안정성, 예매 병목 분석 근거로 사용한다.
+
+infra audit 실제 적재 검증:
+
+| event_type | producer | count |
+| --- | --- | ---: |
+| `SQS_WORKER_STATUS_RECORDED` | `sqs-worker-audit-recorder` | 1 |
+| `KAFKA_S3_SINK_COMPLETED` | `kafka-s3-sink` | 1 |
+
+audit event 반영 후 Capacity Advisor:
+
+```text
+Kafka pipeline events: 91
+producer counts:
+- ticket-service=42
+- waiting-room-service=42
+- seat-lock-service=5
+- sqs-worker-audit-recorder=1
+- kafka-s3-sink=1
+sink completed events: 1
+```
+
+다음 남은 작업:
+
+```text
+P0. 실제 부하테스트로 Capacity Advisor 추천값 재검증
+P0. 부하테스트 결과를 load-test validation 문서에 기록
+P1. Capacity Advisor Slack Report를 한 번 더 실행해 sink completed=1이 Slack에 표시되는지 캡처
+P1. 발표용 내 담당 파트 전체 요약 문서 최종 정리
+P2. event-driven Slack 알림: ADMISSION_THROTTLE_APPLIED, SQS DLQ 즉시 알림
+P2. 예매 오픈 30분 전/예매 중 5분마다 Capacity Advisor 자동 실행
+```
