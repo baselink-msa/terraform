@@ -379,6 +379,7 @@ Kafka는 기존 SQS를 대체하려고 넣은 것이 아닙니다. SQS는 예매
 - Glue/Athena query
 - Capacity Advisor report
 - 처리량과 DB 여유율 기반 안전 입장량 추천
+- SQS/Worker backlog/DLQ 상태
 - Slack 운영 리포트
 
 검증된 이벤트:
@@ -402,7 +403,7 @@ ADMISSION_THROTTLE_RECOVERED
 발표 멘트:
 
 ```text
-사용자가 대기열에 들어오고, 입장권을 받고, 예매를 요청하고, 확정되는 전 과정을 이벤트로 기록했습니다. 이 이벤트를 Kafka에서 S3/Athena로 적재하고, Capacity Advisor가 실제 확정 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 여기에 RDS connection 압력으로 감속이 발생했는지까지 `capacity.signals`로 기록해 리포트에 함께 보여주도록 확장했습니다.
+사용자가 대기열에 들어오고, 입장권을 받고, 예매를 요청하고, 확정되는 전 과정을 이벤트로 기록했습니다. 이 이벤트를 Kafka에서 S3/Athena로 적재하고, Capacity Advisor가 실제 확정 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 여기에 RDS connection 압력으로 감속이 발생했는지와 SQS worker 처리 상태까지 리포트에 함께 보여주도록 확장했습니다.
 ```
 
 캡처 후보:
@@ -511,6 +512,7 @@ ADMISSION_THROTTLE_RECOVERED
 - Kafka/MSK 이벤트 스트리밍
 - Kafka -> S3/Athena -> Capacity Advisor E2E
 - Capacity Advisor Slack report workflow
+- SQS/Worker 상태 리포트 섹션
 - 부하테스트 검증 계획
 
 남은 작업:
@@ -518,7 +520,6 @@ ADMISSION_THROTTLE_RECOVERED
 - 실제 k6 부하테스트 실행
 - 부하 결과 기반 RDS Proxy / Read Replica 판단
 - Capacity Advisor floor / 증감률 보정
-- SQS/Worker 상태를 Capacity Advisor 리포트에 추가
 - 좌석 잠금/Valkey 이벤트 수집과 리포트 반영
 - Kafka pipeline health 리포트 반영
 - 예매 오픈 전/진행 중/감속 발생 시 Slack 트리거 고도화

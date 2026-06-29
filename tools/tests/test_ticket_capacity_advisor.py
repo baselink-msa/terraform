@@ -119,6 +119,55 @@ class CapacityAdvisorTest(unittest.TestCase):
         self.assertIn("## 최근 감속/복구 신호", markdown)
         self.assertIn("감속/복구 이벤트가 없습니다", markdown)
 
+    def test_report_includes_sqs_worker_summary(self):
+        sqs_worker = advisor.SqsWorkerSummary(
+            source_queue_name="ticket-confirm-queue",
+            dlq_queue_name="ticket-confirm-dlq",
+            status="BACKLOG",
+            visible_messages=12,
+            not_visible_messages=3,
+            oldest_message_age_seconds=180,
+            dlq_visible_messages=0,
+            dlq_oldest_message_age_seconds=0,
+        )
+
+        report = advisor.calculate_recommendation(
+            self.inputs(),
+            sqs_worker=sqs_worker,
+        )
+        markdown = advisor.markdown_report(report)
+
+        self.assertEqual("BACKLOG", report["sqsWorker"]["status"])
+        self.assertIn("## SQS/Worker 처리 상태", markdown)
+        self.assertIn("ticket-confirm-queue", markdown)
+        self.assertIn("`12`", markdown)
+
+    def test_sqs_worker_status_prioritizes_dlq_over_backlog(self):
+        status = advisor._sqs_worker_status(
+            visible_messages=12,
+            not_visible_messages=0,
+            oldest_message_age_seconds=0,
+            dlq_visible_messages=1,
+            backlog_threshold=10,
+            oldest_age_threshold_seconds=300,
+            dlq_threshold=1,
+        )
+
+        self.assertEqual("DLQ_DETECTED", status)
+
+    def test_sqs_worker_status_detects_processing_without_backlog(self):
+        status = advisor._sqs_worker_status(
+            visible_messages=0,
+            not_visible_messages=2,
+            oldest_message_age_seconds=0,
+            dlq_visible_messages=0,
+            backlog_threshold=10,
+            oldest_age_threshold_seconds=300,
+            dlq_threshold=1,
+        )
+
+        self.assertEqual("PROCESSING", status)
+
 
 if __name__ == "__main__":
     unittest.main()

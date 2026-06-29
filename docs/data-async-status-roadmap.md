@@ -52,7 +52,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
 | 운영 모니터링 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림 경로 정리, Capacity Advisor Slack report workflow 구현 |
 | 발표/Runbook | 진행 중 | 담당 파트 발표 outline, 운영 알림 Runbook, 인수인계 문서 최신화 중 |
-| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, Slack report까지 확장 |
+| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, SQS/Worker 상태, Slack report까지 확장 |
 
 현재 완성도 판단:
 
@@ -69,7 +69,8 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 - `capacity-reports` 또는 `ops-reports`는 Capacity Advisor 운영 리포트 채널로 분리하는 방향이 적합하다.
 - Capacity Advisor Slack report workflow는 구현 완료됐고, 실제 Slack 전송은 `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 가능하다.
 - Kafka 개인 프로젝트는 `ticket.domain.events`, `waiting.operational.events`, `capacity.signals`를 S3/Athena/Capacity Advisor와 연결하는 수준까지 확장됐다.
-- 다음 고도화 후보는 SQS/Worker 처리 상태, 좌석 잠금/Valkey 이벤트, Kafka pipeline health를 리포트에 추가하는 것이다.
+- SQS/Worker 처리 상태는 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
+- 다음 고도화 후보는 좌석 잠금/Valkey 이벤트와 Kafka pipeline health를 리포트에 추가하는 것이다.
 
 ## 4. RDS PostgreSQL
 

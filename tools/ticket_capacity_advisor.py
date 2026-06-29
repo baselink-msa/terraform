@@ -43,6 +43,22 @@ class CapacitySignalSummary:
     latest_effective_enter_per_minute: int | None = None
 
 
+@dataclass(frozen=True)
+class SqsWorkerSummary:
+    source_queue_name: str = "ticket-confirm-queue"
+    dlq_queue_name: str = "ticket-confirm-dlq"
+    status: str = "UNKNOWN"
+    visible_messages: int | None = None
+    not_visible_messages: int | None = None
+    oldest_message_age_seconds: int | None = None
+    dlq_visible_messages: int | None = None
+    dlq_oldest_message_age_seconds: int | None = None
+    backlog_threshold: int = 10
+    oldest_age_threshold_seconds: int = 300
+    dlq_threshold: int = 1
+    error: str | None = None
+
+
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
     if connection_count >= budget:
         return "STOP", 0
@@ -60,6 +76,7 @@ def calculate_recommendation(
     minimum_samples: int = 20,
     safety_factor: float = 0.8,
     capacity_signals: CapacitySignalSummary | None = None,
+    sqs_worker: SqsWorkerSummary | None = None,
 ) -> dict[str, Any]:
     pressure_level, throttle_percent = db_pressure(
         inputs.current_db_connections, inputs.db_connection_budget
@@ -92,6 +109,7 @@ def calculate_recommendation(
             "reservationConfirmed": inputs.reservation_confirmed,
         },
         "capacitySignals": asdict(capacity_signals or CapacitySignalSummary()),
+        "sqsWorker": asdict(sqs_worker or SqsWorkerSummary()),
     }
     if insufficient:
         return {
@@ -178,6 +196,105 @@ def _aws_json(arguments: list[str]) -> dict[str, Any]:
         text=True,
     )
     return json.loads(completed.stdout)
+
+
+def _queue_attributes(queue_name: str, region: str) -> dict[str, int]:
+    queue_url = _aws_json(
+        [
+            "sqs",
+            "get-queue-url",
+            "--queue-name",
+            queue_name,
+            "--region",
+            region,
+        ]
+    )["QueueUrl"]
+    response = _aws_json(
+        [
+            "sqs",
+            "get-queue-attributes",
+            "--queue-url",
+            queue_url,
+            "--attribute-names",
+            "ApproximateNumberOfMessages",
+            "ApproximateNumberOfMessagesNotVisible",
+            "ApproximateAgeOfOldestMessage",
+            "--region",
+            region,
+        ]
+    )
+    attributes = response.get("Attributes", {})
+    return {
+        "visible": int(attributes.get("ApproximateNumberOfMessages", 0)),
+        "not_visible": int(
+            attributes.get("ApproximateNumberOfMessagesNotVisible", 0)
+        ),
+        "oldest_age": int(attributes.get("ApproximateAgeOfOldestMessage", 0)),
+    }
+
+
+def _sqs_worker_status(
+    visible_messages: int,
+    not_visible_messages: int,
+    oldest_message_age_seconds: int,
+    dlq_visible_messages: int,
+    backlog_threshold: int,
+    oldest_age_threshold_seconds: int,
+    dlq_threshold: int,
+) -> str:
+    if dlq_visible_messages >= dlq_threshold:
+        return "DLQ_DETECTED"
+    if visible_messages >= backlog_threshold:
+        return "BACKLOG"
+    if oldest_message_age_seconds >= oldest_age_threshold_seconds:
+        return "DELAYED"
+    if visible_messages > 0 or not_visible_messages > 0:
+        return "PROCESSING"
+    return "HEALTHY"
+
+
+def collect_sqs_worker_summary(
+    source_queue_name: str,
+    dlq_queue_name: str,
+    region: str,
+    backlog_threshold: int = 10,
+    oldest_age_threshold_seconds: int = 300,
+    dlq_threshold: int = 1,
+) -> SqsWorkerSummary:
+    try:
+        source = _queue_attributes(source_queue_name, region)
+        dlq = _queue_attributes(dlq_queue_name, region)
+        status = _sqs_worker_status(
+            source["visible"],
+            source["not_visible"],
+            source["oldest_age"],
+            dlq["visible"],
+            backlog_threshold,
+            oldest_age_threshold_seconds,
+            dlq_threshold,
+        )
+        return SqsWorkerSummary(
+            source_queue_name=source_queue_name,
+            dlq_queue_name=dlq_queue_name,
+            status=status,
+            visible_messages=source["visible"],
+            not_visible_messages=source["not_visible"],
+            oldest_message_age_seconds=source["oldest_age"],
+            dlq_visible_messages=dlq["visible"],
+            dlq_oldest_message_age_seconds=dlq["oldest_age"],
+            backlog_threshold=backlog_threshold,
+            oldest_age_threshold_seconds=oldest_age_threshold_seconds,
+            dlq_threshold=dlq_threshold,
+        )
+    except Exception as exc:
+        return SqsWorkerSummary(
+            source_queue_name=source_queue_name,
+            dlq_queue_name=dlq_queue_name,
+            backlog_threshold=backlog_threshold,
+            oldest_age_threshold_seconds=oldest_age_threshold_seconds,
+            dlq_threshold=dlq_threshold,
+            error=str(exc),
+        )
 
 
 def _run_athena_query(query: str, database: str, workgroup: str, region: str) -> list[str]:
@@ -375,6 +492,11 @@ def collect_capacity_signals(
 def markdown_report(report: dict[str, Any]) -> str:
     recommendation = report.get("recommendedPolicyEnterPerMinute")
     signals = report.get("capacitySignals") or {}
+    sqs_worker = report.get("sqsWorker") or {}
+    sqs_oldest_age = sqs_worker.get("oldest_message_age_seconds")
+    sqs_oldest_age_text = (
+        f"{sqs_oldest_age}초" if sqs_oldest_age is not None else "정보 없음"
+    )
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -432,6 +554,27 @@ def markdown_report(report: dict[str, Any]) -> str:
                     f"- 당시 effective 입장량: `{signals.get('latest_effective_enter_per_minute')}명/분`",
                 ]
             )
+    lines.extend(
+        [
+            "",
+            "## SQS/Worker 처리 상태",
+            "",
+            f"- 상태: `{sqs_worker.get('status', 'UNKNOWN')}`",
+            f"- 원본 큐: `{sqs_worker.get('source_queue_name', 'ticket-confirm-queue')}`",
+            f"- 원본 큐 대기 메시지: `{sqs_worker.get('visible_messages') if sqs_worker.get('visible_messages') is not None else '정보 없음'}`",
+            f"- 원본 큐 처리 중 메시지: `{sqs_worker.get('not_visible_messages') if sqs_worker.get('not_visible_messages') is not None else '정보 없음'}`",
+            f"- 가장 오래된 메시지 대기 시간: `{sqs_oldest_age_text}`",
+            f"- DLQ: `{sqs_worker.get('dlq_queue_name', 'ticket-confirm-dlq')}`",
+            f"- DLQ 대기 메시지: `{sqs_worker.get('dlq_visible_messages') if sqs_worker.get('dlq_visible_messages') is not None else '정보 없음'}`",
+        ]
+    )
+    if sqs_worker.get("error"):
+        lines.append(f"- SQS 상태 조회 오류: `{sqs_worker.get('error')}`")
+    else:
+        lines.append(
+            "- 해석: `DLQ_DETECTED`는 원인 확인 후 redrive가 필요하고, "
+            "`BACKLOG`/`DELAYED`는 worker 처리 지연 또는 downstream 병목을 의심합니다."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -445,6 +588,16 @@ def main() -> None:
     parser.add_argument("--database", default="baselink_dev_ticket_events")
     parser.add_argument("--workgroup", default="baselink-dev-ticket-events")
     parser.add_argument("--region", default="ap-northeast-2")
+    parser.add_argument("--sqs-source-queue-name", default="ticket-confirm-queue")
+    parser.add_argument("--sqs-dlq-name", default="ticket-confirm-dlq")
+    parser.add_argument("--sqs-backlog-threshold", type=int, default=10)
+    parser.add_argument("--sqs-oldest-age-threshold-seconds", type=int, default=300)
+    parser.add_argument("--sqs-dlq-threshold", type=int, default=1)
+    parser.add_argument(
+        "--skip-sqs-worker",
+        action="store_true",
+        help="Do not query SQS queue attributes for the worker status section.",
+    )
     parser.add_argument(
         "--producer-filter",
         help="Only analyze events from this producer, for example capacity-load-test.",
@@ -482,10 +635,29 @@ def main() -> None:
         args.producer_filter,
         producer_filters,
     )
+    sqs_worker = (
+        SqsWorkerSummary(
+            source_queue_name=args.sqs_source_queue_name,
+            dlq_queue_name=args.sqs_dlq_name,
+            backlog_threshold=args.sqs_backlog_threshold,
+            oldest_age_threshold_seconds=args.sqs_oldest_age_threshold_seconds,
+            dlq_threshold=args.sqs_dlq_threshold,
+        )
+        if args.skip_sqs_worker
+        else collect_sqs_worker_summary(
+            args.sqs_source_queue_name,
+            args.sqs_dlq_name,
+            args.region,
+            args.sqs_backlog_threshold,
+            args.sqs_oldest_age_threshold_seconds,
+            args.sqs_dlq_threshold,
+        )
+    )
     report = calculate_recommendation(
         inputs,
         args.minimum_samples,
         capacity_signals=capacity_signals,
+        sqs_worker=sqs_worker,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

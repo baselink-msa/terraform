@@ -44,6 +44,19 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
                 "latest_db_throttle_percent": 100,
                 "latest_effective_enter_per_minute": 40,
             },
+            "sqsWorker": {
+                "source_queue_name": "ticket-confirm-queue",
+                "dlq_queue_name": "ticket-confirm-dlq",
+                "status": "HEALTHY",
+                "visible_messages": 0,
+                "not_visible_messages": 0,
+                "oldest_message_age_seconds": 0,
+                "dlq_visible_messages": 0,
+                "dlq_oldest_message_age_seconds": 0,
+                "backlog_threshold": 10,
+                "oldest_age_threshold_seconds": 300,
+                "dlq_threshold": 1,
+            },
         }
         values.update(overrides)
         return values
@@ -65,6 +78,8 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         self.assertIn("최근 감속/복구 신호", text)
         self.assertIn("ADMISSION_THROTTLE_RECOVERED", text)
         self.assertIn("18/60", text)
+        self.assertIn("SQS/Worker 상태", text)
+        self.assertIn("ticket-confirm-queue", text)
 
     def test_payload_explains_when_no_capacity_signals_exist(self):
         report = self.report(
@@ -87,6 +102,24 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         )
 
         self.assertEqual(":warning:", notify.status_emoji(report))
+
+    def test_dlq_status_uses_incident_emoji(self):
+        report = self.report(
+            sqsWorker={
+                "status": "DLQ_DETECTED",
+                "source_queue_name": "ticket-confirm-queue",
+                "dlq_queue_name": "ticket-confirm-dlq",
+                "visible_messages": 0,
+                "not_visible_messages": 0,
+                "oldest_message_age_seconds": 0,
+                "dlq_visible_messages": 1,
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertEqual(":rotating_light:", notify.status_emoji(report))
+        self.assertIn("DLQ_DETECTED", text)
 
 
 if __name__ == "__main__":

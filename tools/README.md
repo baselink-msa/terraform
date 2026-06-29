@@ -79,6 +79,7 @@ Slack 메시지에는 다음 정보가 포함됩니다.
 - 이벤트 표본 수
 - 판단 근거
 - Kafka `capacity.signals` 기반 최근 감속/복구 신호
+- SQS `ticket-confirm-queue` / `ticket-confirm-dlq` 기반 worker 처리 상태
 
 GitHub Actions 자동 알림:
 
@@ -104,9 +105,35 @@ CAPACITY_ADVISOR_MINIMUM_SAMPLES=20
 CAPACITY_ADVISOR_PRODUCER_IN=ticket-service,waiting-room-service
 CAPACITY_ADVISOR_DB_INSTANCE_ID=baselink-dev-postgres
 CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS=22
+CAPACITY_ADVISOR_SQS_SOURCE_QUEUE_NAME=ticket-confirm-queue
+CAPACITY_ADVISOR_SQS_DLQ_NAME=ticket-confirm-dlq
+CAPACITY_ADVISOR_SQS_BACKLOG_THRESHOLD=10
+CAPACITY_ADVISOR_SQS_OLDEST_AGE_THRESHOLD_SECONDS=300
+CAPACITY_ADVISOR_SQS_DLQ_THRESHOLD=1
 ```
 
 `CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS`를 지정하지 않으면 workflow가 CloudWatch `AWS/RDS DatabaseConnections` 최근 값을 조회합니다.
+
+SQS/Worker 상태는 AWS CLI로 SQS queue attributes를 조회해 리포트에 포함합니다.
+
+| 상태 | 의미 |
+| --- | --- |
+| `HEALTHY` | 원본 큐와 DLQ에 대기 메시지가 없음 |
+| `PROCESSING` | 메시지가 처리 중이지만 backlog 기준은 넘지 않음 |
+| `BACKLOG` | 원본 큐 visible messages가 기준 이상 |
+| `DELAYED` | 가장 오래된 메시지 대기 시간이 기준 이상 |
+| `DLQ_DETECTED` | DLQ에 메시지가 있음 |
+| `UNKNOWN` | SQS 상태 조회 실패 또는 생략 |
+
+로컬에서 Athena/DB 부분만 확인하고 SQS 조회를 생략하려면 다음 옵션을 사용할 수 있습니다.
+
+```powershell
+python tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 22 `
+  --skip-sqs-worker
+```
 
 기본 schedule은 매일 09:00 KST입니다. 발표 캡처용으로는 Actions에서 `Capacity Advisor Slack Report`를 수동 실행한 뒤 Slack 메시지와 workflow artifact를 함께 캡처하면 좋습니다.
 
