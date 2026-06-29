@@ -944,11 +944,37 @@ Capacity Advisor Slack report 현재 상태:
 Secret 관련 주의:
 
 ```text
-실제 Slack 전송이 필요해지는 시점에
-GitHub Repository Secret CAPACITY_ADVISOR_SLACK_WEBHOOK_URL을 추가하면 된다.
-
-지금 당장 추가하지 않아도 workflow와 문서 검증은 가능하다.
+GitHub Repository Secret CAPACITY_ADVISOR_SLACK_WEBHOOK_URL은 추가 완료했다.
+Webhook URL이 노출되면 즉시 Slack에서 새 URL을 발급해 Secret을 교체한다.
 ```
+
+2026-06-29 실제 서비스 표본 재검증:
+
+- `kubectl get nodes`와 서비스 deployment/pod 상태 확인 완료
+- `waiting-room-service`, `ticket-service`, `seat-lock-service`, `ticket-worker-service` Ready 확인
+- `tools/run_kafka_capacity_flow.py` 1건 smoke test 성공
+  - reservationId `6246`
+- `tools/run_kafka_capacity_flow.py` 20건 표본 생성 성공
+  - requested `20`
+  - succeeded `20`
+  - failed `0`
+  - reservationId `6247~6266`
+- Capacity Advisor 전체 리포트 로컬 실행 결과
+  - samples: waiting/access/requested/confirmed 모두 `21`
+  - SQS/Worker: `HEALTHY`
+  - Valkey: `HEALTHY`
+  - Kafka pipeline: `HEALTHY`
+  - Kafka event lake total events: `84`
+  - Advisor status: `RECOMMENDED`
+  - confidence: `MEDIUM`
+  - recommended policy: `1명/분`
+- 다음에는 GitHub Actions `Capacity Advisor Slack Report`를 수동 실행해 Slack 메시지 캡처를 확보하면 된다.
+
+Kafka sink runner 보강:
+
+- 기존 runner는 임시 consumer Pod가 `ContainerCreating`인 상태에서 바로 `kubectl logs`를 호출해 실패할 수 있었다.
+- `kubectl wait --for=condition=Ready`를 추가해 Pod Ready 이후 logs를 조회하도록 수정했다.
+- Ready 실패 시 `kubectl get pod`와 `kubectl describe pod`를 함께 보여주도록 개선했다.
 
 Kafka 리포트 확장 후보:
 
@@ -990,9 +1016,9 @@ SQS DLQ 발생
 다음 작업 추천:
 
 ```text
-1. CAPACITY_ADVISOR_SLACK_WEBHOOK_URL Secret 추가 여부 결정
-2. Slack report workflow 수동 실행으로 캡처 확보
-3. seat-lock-service Kafka 이벤트 dev 배포 후 consume/S3/Athena 검증
+1. Kafka sink runner Pod Ready 대기 보강 PR merge
+2. Slack report workflow 수동 실행으로 RECOMMENDED/HEALTHY 캡처 확보
+3. seat-lock-service Kafka 이벤트 dev consume/S3/Athena 검증
 4. SQS/Worker 상태를 Kafka `infra.audit.events` 이벤트 이력으로 확장
 5. 실제 Kafka sink 실행 결과를 `infra.audit.events`로 적재
 6. 실제 부하테스트 결과로 Capacity Advisor 추천값 보정

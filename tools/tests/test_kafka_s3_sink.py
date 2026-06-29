@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 import unittest
+from unittest.mock import Mock, call, patch
 from pathlib import Path
 
 
@@ -122,6 +123,81 @@ class KafkaS3SinkTest(unittest.TestCase):
         self.assertEqual(1, result.accepted)
         self.assertEqual(1, result.skipped)
         self.assertEqual(0, result.written)
+
+    def test_wait_for_pod_ready_uses_kubectl_wait(self):
+        completed = Mock(returncode=0, stdout="pod/demo condition met", stderr="")
+
+        with patch.object(sink.subprocess, "run", return_value=completed) as run:
+            sink.wait_for_pod_ready("demo", "baselink-dev", 120)
+
+        run.assert_called_once_with(
+            [
+                "kubectl",
+                "wait",
+                "pod/demo",
+                "-n",
+                "baselink-dev",
+                "--for=condition=Ready",
+                "--timeout=120s",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_wait_for_pod_ready_includes_status_on_failure(self):
+        wait_result = Mock(returncode=1, stdout="", stderr="timed out")
+        status_result = Mock(returncode=0, stdout="pod demo ContainerCreating", stderr="")
+        describe_result = Mock(returncode=0, stdout="Events: pulling image", stderr="")
+
+        with patch.object(
+            sink.subprocess,
+            "run",
+            side_effect=[wait_result, status_result, describe_result],
+        ) as run:
+            with self.assertRaisesRegex(RuntimeError, "ContainerCreating"):
+                sink.wait_for_pod_ready("demo", "baselink-dev", 1)
+
+        self.assertEqual(
+            [
+                call(
+                    [
+                        "kubectl",
+                        "wait",
+                        "pod/demo",
+                        "-n",
+                        "baselink-dev",
+                        "--for=condition=Ready",
+                        "--timeout=1s",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ),
+                call(
+                    [
+                        "kubectl",
+                        "get",
+                        "pod",
+                        "demo",
+                        "-n",
+                        "baselink-dev",
+                        "-o",
+                        "wide",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ),
+                call(
+                    ["kubectl", "describe", "pod", "demo", "-n", "baselink-dev"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ),
+            ],
+            run.call_args_list,
+        )
 
 
 if __name__ == "__main__":
