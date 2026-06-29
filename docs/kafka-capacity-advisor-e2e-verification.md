@@ -947,3 +947,138 @@ producer failures 0 / invalid 0 / skipped 0 / sink completed 1
 - `SQS_WORKER_STATUS_RECORDED=1`이 Slack 메시지에 표시되었다.
 - `sink completed 1`이 표시되어 Kafka S3 sink 실행 완료 audit event가 Capacity Advisor 리포트까지 연결됐다.
 - 따라서 `infra.audit` 1차 기반은 S3/Athena 조회뿐 아니라 Slack 운영 리포트 반영까지 검증 완료됐다.
+
+## 2026-06-29 실제 부하테스트 기반 Capacity Advisor 재검증
+
+### 목적
+
+이전 검증은 수동 API 호출과 작은 표본을 사용해 Kafka -> S3/Athena -> Capacity Advisor 흐름이 동작하는지 확인하는 데 초점이 있었다.
+
+이번 검증은 실제 k6 부하테스트로 waiting-room, ticket-service를 호출해 더 큰 이벤트 표본을 만들고, 그 표본으로 Capacity Advisor 추천값을 다시 계산하는 데 목적이 있다.
+
+검증 흐름:
+
+```text
+k6 capacity-advisor-flow
+-> waiting-room-service / ticket-service 실제 API 호출
+-> Kafka 이벤트 발행
+-> Kafka to S3 sink 실행
+-> S3/Athena event lake 최신화
+-> SQS/worker audit event 기록
+-> Capacity Advisor 재계산
+```
+
+### k6 부하테스트 결과
+
+| 시나리오 | VU | 기간 | HTTP 요청 수 | HTTP 실패율 | Check 성공률 | 전체 p95 | 예약 요청 p95 | 예약 확정 p95 | 입장권 발급 p95 |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| smoke | 2 | 1m | 321 | 0.00% | 99.84% | 93.45ms | 41.95ms | 39.19ms | 111.91ms |
+| baseline | 10 | 3m | 1,278 | 0.08% | 99.80% | 68.86ms | 57.16ms | 43.15ms | 87.83ms |
+| load | 30 | 5m | 3,549 | 0.20% | 74.27% | 55.61ms | 129.80ms | 126.23ms | 133.13ms |
+
+30 VU load 시나리오에서 k6 check threshold는 실패했다.
+
+다만 실패 지점은 ticket reserve/confirm이 아니라 waiting-room token/status check였다.
+
+| 시나리오 | issue-token 성공 | issue-token 실패 | ticket reserve 성공 | ticket reserve 실패 | ticket confirm 성공 | ticket confirm 실패 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| smoke | 72 | 0 | 72 | 0 | 72 | 0 |
+| baseline | 152 | 1 | 152 | 0 | 152 | 0 |
+| load | 72 | 7 | 72 | 0 | 72 | 0 |
+
+해석:
+
+- 예매 요청과 예매 확정 API는 30 VU load에서도 성공했다.
+- RDS connection 고갈이나 ticket-service write 병목은 확인되지 않았다.
+- waiting-room admission control이 일부 사용자의 token 발급을 제한하면서 check 성공률이 낮아졌다.
+- 따라서 이 결과는 장애라기보다 “대기열이 backend 보호를 위해 입장을 제한했다”는 신호로 해석하는 것이 맞다.
+
+### 부하 이후 인프라 상태
+
+| 영역 | 결과 | 해석 |
+| --- | --- | --- |
+| RDS DatabaseConnections | 최대 28/60 | connection budget 대비 여유 있음 |
+| SQS `ticket-confirm-queue` | visible 0 / not visible 0 / delayed 0 | worker backlog 없음 |
+| SQS `ticket-confirm-dlq` | visible 0 / not visible 0 / delayed 0 | DLQ 누적 없음 |
+| backend deployment | waiting-room, ticket, ticket-worker, seat-lock 모두 2/2 Ready | 부하 후 Pod 상태 정상 |
+| Valkey | CPU 1.23%, memory 5.32%, evictions 0, replication lag 0초 | 좌석 잠금/대기열 캐시 계층 안정 |
+
+### Capacity Advisor 재계산 결과
+
+실행 조건:
+
+```text
+gameId: 9001
+currentPolicyEnterPerMinute: 40
+currentDbConnections: 28
+lookbackDays: 1
+minimumSamples: 20
+producerIn: ticket-service,waiting-room-service
+```
+
+결과:
+
+| 항목 | 결과 |
+| --- | --- |
+| 상태 | `RECOMMENDED` |
+| 신뢰도 | `HIGH` |
+| 현재 정책 | 40명/분 |
+| 추천 정책 | 1명/분 |
+| DB 상태 | `NORMAL` (28/60) |
+| 대기열 진입 | 402 |
+| 입장권 발급 | 317 |
+| 예약 요청 | 317 |
+| 예약 확정 | 317 |
+| 안정 구간 예약 확정 처리량 | 2.0건/분 |
+| 예약 확정률 | 100.0% |
+| 평균 대기 시간 | 약 8.31초 |
+| Kafka pipeline health | `HEALTHY`, total events 1,361 |
+| SQS/Worker | `HEALTHY` |
+| Valkey | `HEALTHY` |
+
+Kafka pipeline health:
+
+```text
+total events: 1361
+producer counts:
+- waiting-room-service=719
+- ticket-service=634
+- seat-lock-service=5
+- sqs-worker-audit-recorder=2
+- kafka-s3-sink=1
+
+event type counts:
+- WAITING_ENTERED=402
+- ACCESS_TOKEN_ISSUED=317
+- RESERVATION_REQUESTED=317
+- RESERVATION_CONFIRMED=317
+- SQS_WORKER_STATUS_RECORDED=2
+- KAFKA_S3_SINK_COMPLETED=1
+- SEAT_LOCK_REQUESTED=2
+- SEAT_LOCKED=1
+- SEAT_LOCK_FAILED=1
+- SEAT_UNLOCKED=1
+```
+
+추천값 1명/분 해석:
+
+```text
+stable_confirmed_per_minute = 2.0
+reservation_conversion = 100%
+safety_factor = 0.8
+waiting_factor = 1.0
+
+raw_recommendation = 2.0 * 1.0 * 0.8 * 1.0 = 1.6
+floor(1.6) = 1
+```
+
+따라서 추천값 1명/분은 DB가 위험하다는 의미가 아니다. 현재 부하테스트에서 관측된 안정 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 나온 보수적인 값이다.
+
+### 최종 판단
+
+- Kafka/MSK 개인 프로젝트는 실제 부하 이벤트를 분석 저장소와 Capacity Advisor까지 연결하는 수준으로 검증됐다.
+- 기존 21건 표본에서 317건 이상의 예매 흐름 표본으로 확장됐고, Advisor 신뢰도도 `HIGH`로 상승했다.
+- RDS/SQS/Valkey/Kafka pipeline health가 함께 정상으로 표시되어 운영 리포트 역할이 강화됐다.
+- 이번 부하에서는 RDS Proxy를 즉시 도입해야 할 connection storm은 확인되지 않았다.
+- Read Replica는 조회 API 중심 부하테스트를 별도로 수행한 뒤 도입 여부를 판단하는 것이 좋다.
+- Capacity Advisor 추천값은 운영에 바로 적용하기 전 minimum floor, 최대 감소율 guardrail, 예매 오픈 규모별 정책을 추가하는 것이 좋다.

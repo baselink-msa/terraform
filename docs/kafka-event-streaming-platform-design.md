@@ -211,6 +211,8 @@ Backend event
 - 2026-06-29 기준 SQS/Worker와 Valkey/좌석 잠금 계층 상태를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
 - 2026-06-29 기준 Athena event lake 기반 Kafka pipeline health를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
 - 2026-06-29 기준 `seat-lock-service` 좌석 잠금 이벤트 Kafka publish와 Kafka→S3 sink 허용 event type 반영 완료
+- 2026-06-29 기준 `SQS_WORKER_STATUS_RECORDED`, `KAFKA_S3_SINK_COMPLETED` audit event를 S3/Athena event lake와 Slack report에서 검증 완료
+- 2026-06-29 기준 실제 k6 부하테스트 이벤트 표본으로 Capacity Advisor `HIGH` 신뢰도 재검증 완료
 
 생성 완료 topic:
 
@@ -297,7 +299,8 @@ dev에서는 custom consumer가 단순합니다.
 - Kafka pipeline health 섹션 추가 완료
 - 기본 schedule은 매일 09:00 KST
 - `workflow_dispatch`로 수동 실행 가능
-- `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret이 없으면 dry-run payload만 출력하고 성공 처리
+- `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 실제 Slack 전송 검증 완료
+- Secret이 없을 때는 dry-run payload만 출력하고 성공 처리하는 fallback 구조 유지
 
 아직 자동화되지 않은 부분:
 
@@ -347,7 +350,7 @@ SQS DLQ 발생
 -> 필요 시 Capacity Advisor 리포트에 backlog/DLQ 맥락 추가
 ```
 
-`CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` GitHub Repository Secret은 실제 Slack 전송을 시작하기 직전에 추가해도 된다. Secret이 없으면 workflow는 dry-run payload만 출력하므로, 문서/코드 검증과 PR merge를 먼저 끝낸 뒤 발표 캡처나 실제 운영 리포트가 필요할 때 Secret을 넣어도 된다.
+`CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` GitHub Repository Secret은 추가 완료됐고 실제 Slack 전송도 검증했다. Webhook URL이 노출되면 즉시 Slack에서 새 URL을 발급해 GitHub Secret을 교체한다.
 
 ## 7.2 Kafka 리포트 확장 후보
 
@@ -366,7 +369,8 @@ infra.audit.events
 - Capacity Advisor가 AWS CLI로 `ticket-confirm-queue`와 `ticket-confirm-dlq`의 SQS attributes를 조회합니다.
 - JSON/Markdown 리포트에 `sqsWorker` 섹션을 추가했습니다.
 - Slack report에도 `SQS/Worker 상태` 섹션을 추가했습니다.
-- 아직 Kafka `infra.audit.events`로 SQS 상태 이벤트를 발행하는 단계는 아닙니다. 현재는 리포트 생성 시점의 SQS 현재 상태를 조회하는 방식입니다.
+- `record_sqs_worker_audit.py`로 SQS 상태를 `SQS_WORKER_STATUS_RECORDED`, `SQS_BACKLOG_DETECTED`, `SQS_DLQ_DETECTED` audit event로 S3/Athena event lake에 기록할 수 있습니다.
+- 2026-06-29 부하테스트 이후 `SQS_WORKER_STATUS_RECORDED`가 Slack report의 Kafka pipeline health에 표시되는 것을 확인했습니다.
 
 권장 event type:
 
@@ -454,7 +458,9 @@ KAFKA_S3_SINK_COMPLETED
 - 기대 producer는 기본적으로 `ticket-service`, `waiting-room-service`입니다.
 - 기대 event type은 `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED`, `RESERVATION_REQUESTED`, `RESERVATION_CONFIRMED`입니다.
 - 리포트는 전체 이벤트 수, 최신 이벤트 시각, producer별 count, event type별 count, 누락 producer, 누락 event type을 보여줍니다.
-- `infra.audit.events` 기반 `KAFKA_PRODUCE_FAILED`, `KAFKA_EVENT_INVALID`, `KAFKA_EVENT_SKIPPED`, `KAFKA_S3_SINK_COMPLETED`가 적재되면 같은 섹션에 함께 표시할 수 있게 구조를 열어두었습니다.
+- `KAFKA_S3_SINK_COMPLETED`와 `SQS_WORKER_STATUS_RECORDED` audit event가 적재되면 같은 섹션에 함께 표시합니다.
+- 2026-06-29 기준 Slack report에서 `sink completed 1`, `sqs-worker-audit-recorder=1~2`가 표시되는 것을 검증했습니다.
+- `KAFKA_PRODUCE_FAILED`, `KAFKA_EVENT_INVALID`, `KAFKA_EVENT_SKIPPED`는 구조는 열려 있고, 실제 producer/sink 실패 자동 발행은 후속 확장입니다.
 - 아직 MSK broker metric, consumer lag, 상시 sink 지연을 직접 조회하는 단계는 아닙니다. 현재는 Capacity Advisor가 실제로 사용하는 S3/Athena event lake 기준의 pipeline health입니다.
 
 ### 8.4 Capacity Advisor seat-lock 이벤트 섹션
