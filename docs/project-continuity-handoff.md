@@ -1025,3 +1025,77 @@ SQS DLQ 발생
 4. 실제 부하테스트 결과로 Capacity Advisor 추천값 보정
 5. 발표용 Slack 메시지, Actions run, Athena/S3 event lake 캡처 정리
 ```
+
+## 2026-06-29 추가 handoff: seat-lock Kafka E2E 검증 완료
+
+현재 채팅에서 이어서 수행한 작업:
+
+- `seat-lock-service`의 Kafka 이벤트 발행이 실제 dev Pod에 반영되어 있는지 확인했다.
+- 기존 dev Deployment가 과거 이미지로 떠 있어 GitOps main의 desired image인 `25d421d3f7b061faaef1750204c55bba02f5d855`로 수동 정렬했다.
+- `SeatLockKafkaPublisher`가 app jar에 포함된 것을 확인했다.
+- seat-lock API를 호출해 좌석 잠금 성공, 중복 잠금 실패, 잠금 해제 흐름을 만들었다.
+- Kafka publish metric에서 `reservation.lifecycle.events` 발행 성공 5건, 실패 0건을 확인했다.
+- Kafka S3 sink runner로 `seat-lock-service` 이벤트를 S3에 적재했다.
+
+S3 sink 결과:
+
+```json
+{
+  "accepted": 5,
+  "written": 5,
+  "skipped": 0,
+  "invalid": 0
+}
+```
+
+중간에 발견한 문제:
+
+- S3에는 seat-lock 이벤트가 적재됐지만 Athena 조회 결과가 0건이었다.
+- 원인은 Glue `ticket_events` table의 partition projection enum에 seat-lock 이벤트 타입이 없었기 때문이다.
+- `projection.event_type.values`에 없는 이벤트 타입은 S3에 파일이 있어도 Athena가 partition을 스캔하지 않는다.
+
+수정 완료:
+
+- Terraform PR `fix/ticket-events-projection-seat-lock`에서 Glue projection과 Lambda writer 허용 event type을 확장했다.
+- 추가된 event type:
+  - `ADMISSION_THROTTLE_APPLIED`
+  - `ADMISSION_STOP_APPLIED`
+  - `ADMISSION_THROTTLE_RECOVERED`
+  - `SEAT_LOCK_REQUESTED`
+  - `SEAT_LOCKED`
+  - `SEAT_LOCK_FAILED`
+  - `SEAT_UNLOCKED`
+- PR merge 후 `Terraform Apply Dev`의 infra 단계가 성공했고, 실제 Glue projection 반영을 확인했다.
+
+Athena 최종 검증:
+
+| event_type | producer | count |
+| --- | --- | ---: |
+| `SEAT_LOCK_REQUESTED` | `seat-lock-service` | 2 |
+| `SEAT_LOCKED` | `seat-lock-service` | 1 |
+| `SEAT_LOCK_FAILED` | `seat-lock-service` | 1 |
+| `SEAT_UNLOCKED` | `seat-lock-service` | 1 |
+
+이 작업을 수행한 이유:
+
+- 기존 Capacity Advisor는 대기열 진입, 입장권 발급, 예약 요청, 예약 확정 이벤트 중심이었다.
+- 좌석 잠금은 Valkey를 사용하는 핵심 실시간 계층이므로, 이 흐름도 이벤트로 남겨야 예매 병목과 실패 원인을 더 넓게 분석할 수 있다.
+- Kafka를 단순히 “안전 입장량 계산용”으로만 쓰는 것이 아니라, 여러 서비스의 운영 이벤트를 수집하는 인프라 이벤트 플랫폼으로 확장하는 근거가 된다.
+
+얻은 결과:
+
+- seat-lock 이벤트가 Kafka, S3, Athena까지 end-to-end로 검증되었다.
+- 이후 발표에서 “Kafka를 대기열 계산에만 쓴 것이 아니라, 좌석 잠금/Valkey 계층까지 관측 가능한 이벤트 플랫폼으로 확장했다”고 설명할 수 있다.
+- 후속 작업으로 좌석 잠금 성공률, 실패율, 해제율, lock 잔류 의심 이벤트를 Capacity Advisor 리포트에 추가할 수 있다.
+
+다음 우선순위:
+
+```text
+P0. 발표/멘토 설명용 검증 문서 최신화와 캡처 목록 정리
+P0. 실제 부하테스트 결과로 Capacity Advisor 추천값 보정
+P1. SQS/Worker 상태를 `infra.audit.events` 이벤트 이력으로 적재
+P1. Kafka S3 sink 실행 결과를 `infra.audit.events`로 적재
+P1. seat-lock 이벤트 기반 좌석 잠금 성공률/실패율 리포트 섹션 추가
+P2. ADMISSION_THROTTLE_APPLIED, SQS DLQ 발생 시 event-driven Slack 알림
+P2. 예매 오픈 30분 전/예매 중 5분마다 Capacity Advisor 자동 실행
+```
