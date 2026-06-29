@@ -31,6 +31,14 @@ on:
         description: "Comma-separated producers to analyze"
         required: true
         default: "ticket-service,waiting-room-service"
+      occurred_after:
+        description: "Optional inclusive occurredAt lower bound, e.g. 2026-06-29T09:24:00Z"
+        required: false
+        default: ""
+      occurred_before:
+        description: "Optional exclusive occurredAt upper bound, e.g. 2026-06-29T09:34:00Z"
+        required: false
+        default: ""
   schedule:
     # 00:00 UTC = 09:00 KST
     - cron: "0 0 * * *"
@@ -88,6 +96,8 @@ jobs:
           echo "MINIMUM_SAMPLES=${{ inputs.minimum_samples || vars.CAPACITY_ADVISOR_MINIMUM_SAMPLES || '20' }}" >> "$GITHUB_ENV"
           echo "MINIMUM_POLICY_FLOOR=${{ vars.CAPACITY_ADVISOR_MINIMUM_POLICY_FLOOR || '10' }}" >> "$GITHUB_ENV"
           echo "MAX_DECREASE_PERCENT=${{ vars.CAPACITY_ADVISOR_MAX_DECREASE_PERCENT || '50' }}" >> "$GITHUB_ENV"
+          echo "OCCURRED_AFTER=${{ inputs.occurred_after || vars.CAPACITY_ADVISOR_OCCURRED_AFTER || '' }}" >> "$GITHUB_ENV"
+          echo "OCCURRED_BEFORE=${{ inputs.occurred_before || vars.CAPACITY_ADVISOR_OCCURRED_BEFORE || '' }}" >> "$GITHUB_ENV"
           echo "PRODUCER_IN=${{ inputs.producer_in || vars.CAPACITY_ADVISOR_PRODUCER_IN || 'ticket-service,waiting-room-service' }}" >> "$GITHUB_ENV"
           echo "DB_INSTANCE_ID=${{ inputs.db_instance_id || vars.CAPACITY_ADVISOR_DB_INSTANCE_ID || 'baselink-dev-postgres' }}" >> "$GITHUB_ENV"
           echo "DB_CONNECTIONS_OVERRIDE=${{ inputs.current_db_connections || '' }}" >> "$GITHUB_ENV"
@@ -153,6 +163,8 @@ jobs:
             --minimum-samples "${MINIMUM_SAMPLES}" \
             --minimum-policy-floor "${MINIMUM_POLICY_FLOOR}" \
             --max-decrease-percent "${MAX_DECREASE_PERCENT}" \
+            --occurred-after "${OCCURRED_AFTER}" \
+            --occurred-before "${OCCURRED_BEFORE}" \
             --producer-in "${PRODUCER_IN}" \
             --sqs-source-queue-name "${SQS_SOURCE_QUEUE_NAME}" \
             --sqs-dlq-name "${SQS_DLQ_NAME}" \

@@ -173,6 +173,20 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
 
         self.assertIn("감속/복구 이벤트가 없습니다", text)
 
+    def test_payload_includes_analysis_window_when_present(self):
+        report = self.report(
+            analysisWindow={
+                "occurredAfter": "2026-06-29T09:24:00Z",
+                "occurredBefore": "2026-06-29T09:34:00Z",
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertIn("분석 시간 범위", text)
+        self.assertIn("2026-06-29T09:24:00Z", text)
+        self.assertIn("2026-06-29T09:34:00Z", text)
+
     def test_warning_emoji_for_insufficient_data(self):
         report = self.report(
             status="INSUFFICIENT_DATA",

@@ -1096,6 +1096,24 @@ effectiveEnterPerMinuteNow: 20명/분
 - 하지만 DB/SQS/Valkey가 정상인 상황에서 운영 정책을 40명/분에서 1명/분으로 급격히 낮추지 않는다.
 - 추천값은 안정성과 사용자 경험을 함께 고려한 운영 의사결정 값으로 바뀐다.
 
+Slack Report 재검증:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28364753080`
+- generatedAt: `2026-06-29T10:14:08.564000+00:00`
+- 상태: `RECOMMENDED`
+- 신뢰도: `HIGH`
+- 현재 정책: `40명/분`
+- 추천 정책: `20명/분`
+- 현재 DB 반영 입장량: `20명/분`
+- DB 상태: `NORMAL (19/60)`
+- 표본: waiting `402`, access token `317`, reservation requested `317`, reservation confirmed `317`
+- 산출 지표: 안정 확정 처리량 `2.0건/분`, 원시 추천 `1.6명/분`, 운영 하한 `20명/분`
+- SQS/Worker: `HEALTHY`
+- Valkey: `HEALTHY`
+- Kafka pipeline: `HEALTHY`, events `1361`
+
+이 결과로 Capacity Advisor v2 guardrail이 Slack 운영 리포트까지 정상 반영됐음을 확인했다.
+
 ### 최종 판단
 
 - Kafka/MSK 개인 프로젝트는 실제 부하 이벤트를 분석 저장소와 Capacity Advisor까지 연결하는 수준으로 검증됐다.
@@ -1104,4 +1122,51 @@ effectiveEnterPerMinuteNow: 20명/분
 - 이번 부하에서는 RDS Proxy를 즉시 도입해야 할 connection storm은 확인되지 않았다.
 - Read Replica는 조회 API 중심 부하테스트를 별도로 수행한 뒤 도입 여부를 판단하는 것이 좋다.
 - Capacity Advisor 추천값은 v2 guardrail로 1명/분 급락 문제를 1차 보정했다.
-- 다음 고도화는 `testRunId` 또는 시간 범위 필터로 실제 부하테스트 구간만 분리 분석하는 것이다.
+- 다음 고도화는 `--occurred-after`, `--occurred-before` 시간 범위 필터 또는 향후 `testRunId`로 실제 부하테스트 구간만 분리 분석하는 것이다.
+
+### Capacity Advisor time range filter
+
+`lookback_days=1`만 사용하면 같은 날 수행한 smoke, 순차 표본, load 표본이 함께 섞일 수 있다. 그래서 Capacity Advisor에 `occurredAt` 기준 시간 범위 필터를 추가했다.
+
+사용 예시:
+
+```powershell
+python -B tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 28 `
+  --lookback-days 1 `
+  --minimum-samples 20 `
+  --producer-in ticket-service,waiting-room-service `
+  --occurred-after 2026-06-29T09:24:00Z `
+  --occurred-before 2026-06-29T09:34:00Z
+```
+
+GitHub Actions `Capacity Advisor Slack Report`도 수동 실행 입력값으로 `occurred_after`, `occurred_before`를 받을 수 있다.
+
+실제 load 구간 재분석 결과:
+
+```text
+occurred_after:  2026-06-29T09:30:00Z
+occurred_before: 2026-06-29T09:36:00Z
+```
+
+| 항목 | 결과 |
+| --- | --- |
+| 상태 | `RECOMMENDED` |
+| 신뢰도 | `MEDIUM` |
+| 대기열 진입 | 144 |
+| 입장권 발급 | 72 |
+| 예약 요청 | 72 |
+| 예약 확정 | 72 |
+| 안정 확정 처리량 | 27.0건/분 |
+| raw recommendation | 21.6명/분 |
+| 추천 정책 | 21명/분 |
+| DB 상태 | `NORMAL (19/60)` |
+| Kafka pipeline | `HEALTHY`, events `360` |
+
+의미:
+
+- 하루치 전체 분석에서 안정 확정 처리량이 2건/분으로 낮게 보인 것은 smoke/순차 표본이 섞였기 때문이다.
+- 실제 30 VU load 구간만 보면 안정 확정 처리량은 27건/분이고 추천 정책은 21명/분이다.
+- 따라서 Capacity Advisor는 고정적으로 1명/분만 추천하는 도구가 아니라, 분석 구간과 표본 품질에 따라 더 현실적인 추천값을 낼 수 있다.

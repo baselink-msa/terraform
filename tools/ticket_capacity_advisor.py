@@ -28,6 +28,8 @@ class CapacityInputs:
     db_connection_budget: int = 60
     producer_filter: str | None = None
     producer_filters: tuple[str, ...] = ()
+    occurred_after: str | None = None
+    occurred_before: str | None = None
 
 
 @dataclass(frozen=True)
@@ -163,6 +165,10 @@ def calculate_recommendation(
         "lookbackDays": inputs.lookback_days,
         "producerFilter": inputs.producer_filter,
         "producerFilters": list(inputs.producer_filters),
+        "analysisWindow": {
+            "occurredAfter": inputs.occurred_after,
+            "occurredBefore": inputs.occurred_before,
+        },
         "currentPolicyEnterPerMinute": inputs.current_policy_enter_per_minute,
         "currentDbConnections": inputs.current_db_connections,
         "dbConnectionBudget": inputs.db_connection_budget,
@@ -801,6 +807,44 @@ def _sql_in(values: tuple[str, ...] | set[str]) -> str:
     return ", ".join(f"'{value}'" for value in escaped)
 
 
+def _normalize_utc_iso8601(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    text = value.strip()
+    candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+    parsed = datetime.fromisoformat(candidate)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _event_start_date(lookback_days: int, occurred_after: str | None) -> str:
+    if occurred_after:
+        parsed = datetime.fromisoformat(occurred_after.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc).date().isoformat()
+    return (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date().isoformat()
+
+
+def _occurred_at_condition(
+    occurred_after: str | None,
+    occurred_before: str | None,
+    column: str = "occurredAt",
+) -> str:
+    clauses = []
+    if occurred_after:
+        after_sql = occurred_after.replace("'", "''")
+        clauses.append(
+            f"AND from_iso8601_timestamp({column}) >= from_iso8601_timestamp('{after_sql}')"
+        )
+    if occurred_before:
+        before_sql = occurred_before.replace("'", "''")
+        clauses.append(
+            f"AND from_iso8601_timestamp({column}) < from_iso8601_timestamp('{before_sql}')"
+        )
+    return "\n        ".join(clauses)
+
+
 def collect_kafka_pipeline_health(
     game_id: int,
     lookback_days: int,
@@ -810,11 +854,14 @@ def collect_kafka_pipeline_health(
     expected_producers: tuple[str, ...],
     expected_event_types: tuple[str, ...],
     stale_after_hours: int = 24,
+    occurred_after: str | None = None,
+    occurred_before: str | None = None,
 ) -> KafkaPipelineHealthSummary:
     try:
-        start_date = (
-            datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)
-        ).date()
+        occurred_after = _normalize_utc_iso8601(occurred_after)
+        occurred_before = _normalize_utc_iso8601(occurred_before)
+        start_date = _event_start_date(lookback_days, occurred_after)
+        occurred_condition = _occurred_at_condition(occurred_after, occurred_before)
         infra_types_sql = _sql_in(KAFKA_INFRA_AUDIT_EVENT_TYPES)
         query = f"""
         SELECT
@@ -823,11 +870,12 @@ def collect_kafka_pipeline_health(
           count(*) AS event_count,
           coalesce(max(occurredAt), '') AS latest_occurred_at
         FROM ticket_events
-        WHERE event_date >= '{start_date.isoformat()}'
+        WHERE event_date >= '{start_date}'
           AND (
             gameId = {game_id}
             OR event_type IN ({infra_types_sql})
           )
+          {occurred_condition}
         GROUP BY event_type, producer
         """
         rows = _run_athena_query_rows(query, database, workgroup, region)
@@ -909,16 +957,22 @@ def collect_athena_inputs(
     region: str,
     producer_filter: str | None = None,
     producer_filters: tuple[str, ...] = (),
+    occurred_after: str | None = None,
+    occurred_before: str | None = None,
 ) -> CapacityInputs:
-    start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
+    occurred_after = _normalize_utc_iso8601(occurred_after)
+    occurred_before = _normalize_utc_iso8601(occurred_before)
+    start_date = _event_start_date(lookback_days, occurred_after)
     producer_condition = _producer_condition(producer_filter, producer_filters)
+    occurred_condition = _occurred_at_condition(occurred_after, occurred_before)
     query = f"""
     WITH base AS (
       SELECT *
       FROM ticket_events
-      WHERE event_date >= '{start_date.isoformat()}'
+      WHERE event_date >= '{start_date}'
         AND gameId = {game_id}
         {producer_condition}
+        {occurred_condition}
     ),
     confirmed_per_minute AS (
       SELECT date_trunc('minute', from_iso8601_timestamp(occurredAt)) AS minute,
@@ -957,6 +1011,8 @@ def collect_athena_inputs(
         current_db_connections=current_db_connections,
         producer_filter=producer_filter,
         producer_filters=producer_filters,
+        occurred_after=occurred_after,
+        occurred_before=occurred_before,
     )
 
 
@@ -974,14 +1030,19 @@ def collect_capacity_signals(
     region: str,
     producer_filter: str | None = None,
     producer_filters: tuple[str, ...] = (),
+    occurred_after: str | None = None,
+    occurred_before: str | None = None,
 ) -> CapacitySignalSummary:
-    start_date = (datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)).date()
+    occurred_after = _normalize_utc_iso8601(occurred_after)
+    occurred_before = _normalize_utc_iso8601(occurred_before)
+    start_date = _event_start_date(lookback_days, occurred_after)
     producer_condition = _producer_condition(producer_filter, producer_filters)
+    occurred_condition = _occurred_at_condition(occurred_after, occurred_before)
     query = f"""
     WITH signals AS (
       SELECT *
       FROM ticket_events
-      WHERE event_date >= '{start_date.isoformat()}'
+      WHERE event_date >= '{start_date}'
         AND gameId = {game_id}
         AND event_type IN (
           'ADMISSION_THROTTLE_APPLIED',
@@ -989,6 +1050,7 @@ def collect_capacity_signals(
           'ADMISSION_THROTTLE_RECOVERED'
         )
         {producer_condition}
+        {occurred_condition}
     )
     SELECT
       count_if(event_type = 'ADMISSION_THROTTLE_APPLIED'),
@@ -1052,17 +1114,20 @@ def collect_seat_lock_summary(
     region: str,
     producer: str = "seat-lock-service",
     failure_rate_threshold_percent: int = 60,
+    occurred_after: str | None = None,
+    occurred_before: str | None = None,
 ) -> SeatLockSummary:
     try:
-        start_date = (
-            datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)
-        ).date()
+        occurred_after = _normalize_utc_iso8601(occurred_after)
+        occurred_before = _normalize_utc_iso8601(occurred_before)
+        start_date = _event_start_date(lookback_days, occurred_after)
+        occurred_condition = _occurred_at_condition(occurred_after, occurred_before)
         producer_sql = producer.replace("'", "''")
         query = f"""
         WITH locks AS (
           SELECT *
           FROM ticket_events
-          WHERE event_date >= '{start_date.isoformat()}'
+          WHERE event_date >= '{start_date}'
             AND gameId = {game_id}
             AND producer = '{producer_sql}'
             AND event_type IN (
@@ -1071,6 +1136,7 @@ def collect_seat_lock_summary(
               'SEAT_LOCK_FAILED',
               'SEAT_UNLOCKED'
             )
+            {occurred_condition}
         )
         SELECT
           count_if(event_type = 'SEAT_LOCK_REQUESTED'),
@@ -1129,6 +1195,7 @@ def _format_counts(counts: dict[str, int]) -> str:
 
 def markdown_report(report: dict[str, Any]) -> str:
     recommendation = report.get("recommendedPolicyEnterPerMinute")
+    analysis_window = report.get("analysisWindow") or {}
     signals = report.get("capacitySignals") or {}
     sqs_worker = report.get("sqsWorker") or {}
     valkey_status = report.get("valkeyStatus") or {}
@@ -1172,6 +1239,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
         f"- 상태: `{report['status']}`",
         f"- 신뢰도: `{report['confidence']}`",
+        f"- 분석 시간 범위: `{analysis_window.get('occurredAfter') or 'lookback 시작'} ~ {analysis_window.get('occurredBefore') or '현재'}`",
         f"- 현재 정책: `{report['currentPolicyEnterPerMinute']}명/분`",
         f"- 추천 정책: `{recommendation if recommendation is not None else '보류'}`",
         f"- 현재 DB 반영 입장량: `{report.get('effectiveEnterPerMinuteNow')}`",
@@ -1342,6 +1410,22 @@ def main() -> None:
         default=50,
         help="Maximum percent the recommended base policy may decrease at once.",
     )
+    parser.add_argument(
+        "--occurred-after",
+        default="",
+        help=(
+            "Optional inclusive occurredAt lower bound, for example "
+            "2026-06-29T09:24:00Z."
+        ),
+    )
+    parser.add_argument(
+        "--occurred-before",
+        default="",
+        help=(
+            "Optional exclusive occurredAt upper bound, for example "
+            "2026-06-29T09:34:00Z."
+        ),
+    )
     parser.add_argument("--database", default="baselink_dev_ticket_events")
     parser.add_argument("--workgroup", default="baselink-dev-ticket-events")
     parser.add_argument("--region", default="ap-northeast-2")
@@ -1434,6 +1518,8 @@ def main() -> None:
         producer_filters or ("ticket-service", "waiting-room-service")
     )
     kafka_expected_event_types = _csv_tuple(args.kafka_expected_event_types)
+    occurred_after = _normalize_utc_iso8601(args.occurred_after)
+    occurred_before = _normalize_utc_iso8601(args.occurred_before)
     inputs = collect_athena_inputs(
         args.game_id,
         args.lookback_days,
@@ -1444,6 +1530,8 @@ def main() -> None:
         args.region,
         args.producer_filter,
         producer_filters,
+        occurred_after,
+        occurred_before,
     )
     capacity_signals = collect_capacity_signals(
         args.game_id,
@@ -1453,6 +1541,8 @@ def main() -> None:
         args.region,
         args.producer_filter,
         producer_filters,
+        occurred_after,
+        occurred_before,
     )
     sqs_worker = (
         SqsWorkerSummary(
@@ -1513,6 +1603,8 @@ def main() -> None:
             kafka_expected_producers,
             kafka_expected_event_types,
             args.kafka_stale_after_hours,
+            occurred_after,
+            occurred_before,
         )
     )
     seat_lock = (
@@ -1531,6 +1623,8 @@ def main() -> None:
             args.region,
             args.seat_lock_producer,
             args.seat_lock_failure_rate_threshold_percent,
+            occurred_after,
+            occurred_before,
         )
     )
     report = calculate_recommendation(

@@ -75,6 +75,7 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     valkey_status = report.get("valkeyStatus") or {}
     kafka_health = report.get("kafkaPipelineHealth") or {}
     seat_lock = report.get("seatLock") or {}
+    analysis_window = report.get("analysisWindow") or {}
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -113,6 +114,12 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
         f"예약 요청 `{sample.get('reservationRequested', 0)}` / "
         f"예약 확정 `{sample.get('reservationConfirmed', 0)}`"
     )
+    window_text = None
+    if analysis_window.get("occurredAfter") or analysis_window.get("occurredBefore"):
+        window_text = (
+            f"`{analysis_window.get('occurredAfter') or 'lookback 시작'}` ~ "
+            f"`{analysis_window.get('occurredBefore') or '현재'}`"
+        )
     calculation = report.get("calculation") or {}
     calculation_items = []
     if calculation:
@@ -153,6 +160,14 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
         {"type": "section", "fields": fields},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*표본*\n{sample_text}"}},
     ]
+
+    if window_text:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*분석 시간 범위*\n{window_text}"},
+            }
+        )
 
     if calculation_text:
         blocks.append(
