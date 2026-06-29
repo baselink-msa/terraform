@@ -28,6 +28,15 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
                 "reservationRequested": 128,
                 "reservationConfirmed": 127,
             },
+            "calculation": {
+                "stableConfirmedPerMinute": 23.0,
+                "reservationConversionPercent": 99.2,
+                "averageWaitingSeconds": 60.0,
+                "averageObservedEffectiveEnterPerMinute": 40.0,
+                "safetyFactor": 0.8,
+                "waitingFactor": 1.0,
+                "maximumIncreaseGuardrail": 50,
+            },
             "reasons": [
                 "안정 구간 예약 확정 처리량은 분당 23.00건입니다.",
                 "예약 요청 대비 확정률은 99.2%입니다.",
@@ -119,6 +128,10 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
 
         self.assertIn("Game 9001 Capacity Advisor", payload["text"])
         self.assertIn("추천 18명/분", payload["text"])
+        self.assertIn("산출 지표", text)
+        self.assertIn("23.0건/분", text)
+        self.assertIn("99.2%", text)
+        self.assertIn("안전계수 `0.8`", text)
         self.assertIn("최근 감속/복구 신호", text)
         self.assertIn("ADMISSION_THROTTLE_RECOVERED", text)
         self.assertIn("18/60", text)

@@ -77,6 +77,7 @@ Slack 메시지에는 다음 정보가 포함됩니다.
 - 현재 DB 반영 입장량
 - DB pressure level과 connection 수
 - 이벤트 표본 수
+- 안정 확정 처리량, 예약 확정률, 안전계수, 대기시간 보정 등 산출 지표
 - 판단 근거
 - Kafka `capacity.signals` 기반 최근 감속/복구 신호
 - SQS `ticket-confirm-queue` / `ticket-confirm-dlq` 기반 worker 처리 상태
