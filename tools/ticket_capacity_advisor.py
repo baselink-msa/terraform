@@ -5,7 +5,8 @@ import argparse
 import json
 import math
 import subprocess
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,31 @@ class ValkeyStatusSummary:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class KafkaPipelineHealthSummary:
+    status: str = "UNKNOWN"
+    lookback_days: int = 7
+    expected_producers: tuple[str, ...] = ("ticket-service", "waiting-room-service")
+    expected_event_types: tuple[str, ...] = (
+        "WAITING_ENTERED",
+        "ACCESS_TOKEN_ISSUED",
+        "RESERVATION_REQUESTED",
+        "RESERVATION_CONFIRMED",
+    )
+    total_events: int | None = None
+    latest_occurred_at: str | None = None
+    producer_counts: dict[str, int] = field(default_factory=dict)
+    event_type_counts: dict[str, int] = field(default_factory=dict)
+    missing_producers: tuple[str, ...] = ()
+    missing_event_types: tuple[str, ...] = ()
+    producer_failures: int | None = None
+    invalid_events: int | None = None
+    skipped_events: int | None = None
+    sink_completed_events: int | None = None
+    stale_after_hours: int = 24
+    error: str | None = None
+
+
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
     if connection_count >= budget:
         return "STOP", 0
@@ -95,6 +121,7 @@ def calculate_recommendation(
     capacity_signals: CapacitySignalSummary | None = None,
     sqs_worker: SqsWorkerSummary | None = None,
     valkey_status: ValkeyStatusSummary | None = None,
+    kafka_pipeline_health: KafkaPipelineHealthSummary | None = None,
 ) -> dict[str, Any]:
     pressure_level, throttle_percent = db_pressure(
         inputs.current_db_connections, inputs.db_connection_budget
@@ -129,6 +156,9 @@ def calculate_recommendation(
         "capacitySignals": asdict(capacity_signals or CapacitySignalSummary()),
         "sqsWorker": asdict(sqs_worker or SqsWorkerSummary()),
         "valkeyStatus": asdict(valkey_status or ValkeyStatusSummary()),
+        "kafkaPipelineHealth": asdict(
+            kafka_pipeline_health or KafkaPipelineHealthSummary()
+        ),
     }
     if insufficient:
         return {
@@ -554,6 +584,68 @@ def _run_athena_query(query: str, database: str, workgroup: str, region: str) ->
     return [item.get("VarCharValue", "") for item in rows[1]["Data"]]
 
 
+def _run_athena_query_rows(
+    query: str,
+    database: str,
+    workgroup: str,
+    region: str,
+    max_results: int = 1000,
+) -> list[list[str]]:
+    started = _aws_json(
+        [
+            "athena",
+            "start-query-execution",
+            "--query-string",
+            query,
+            "--query-execution-context",
+            f"Database={database}",
+            "--work-group",
+            workgroup,
+            "--region",
+            region,
+        ]
+    )
+    execution_id = started["QueryExecutionId"]
+    for _ in range(60):
+        execution = _aws_json(
+            [
+                "athena",
+                "get-query-execution",
+                "--query-execution-id",
+                execution_id,
+                "--region",
+                region,
+            ]
+        )["QueryExecution"]
+        state = execution["Status"]["State"]
+        if state == "SUCCEEDED":
+            break
+        if state in {"FAILED", "CANCELLED"}:
+            raise RuntimeError(execution["Status"].get("StateChangeReason", state))
+        time.sleep(1)
+    else:
+        raise TimeoutError("Athena query did not finish within 60 seconds")
+
+    rows = _aws_json(
+        [
+            "athena",
+            "get-query-results",
+            "--query-execution-id",
+            execution_id,
+            "--max-results",
+            str(max_results),
+            "--region",
+            region,
+        ]
+    )["ResultSet"]["Rows"]
+    if len(rows) < 2:
+        return []
+    return [
+        [item.get("VarCharValue", "") for item in row.get("Data", [])]
+        for row in rows[1:]
+    ]
+
+
 def _producer_condition(
     producer_filter: str | None = None,
     producer_filters: tuple[str, ...] = (),
@@ -568,6 +660,155 @@ def _producer_condition(
         quoted = ", ".join(f"'{producer}'" for producer in escaped)
         return f"AND producer IN ({quoted})"
     return ""
+
+
+KAFKA_INFRA_AUDIT_EVENT_TYPES = {
+    "KAFKA_PRODUCE_FAILED",
+    "KAFKA_S3_SINK_DELAYED",
+    "KAFKA_EVENT_SKIPPED",
+    "KAFKA_EVENT_INVALID",
+    "KAFKA_S3_SINK_COMPLETED",
+}
+
+
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _kafka_pipeline_status(
+    total_events: int,
+    missing_producers: tuple[str, ...],
+    missing_event_types: tuple[str, ...],
+    latest_occurred_at: str | None,
+    producer_failures: int,
+    invalid_events: int,
+    stale_after_hours: int,
+) -> str:
+    if producer_failures > 0:
+        return "PRODUCER_FAILURE"
+    if invalid_events > 0:
+        return "INVALID_EVENTS"
+    if total_events == 0:
+        return "NO_EVENTS"
+    latest_at = _parse_utc_datetime(latest_occurred_at)
+    if latest_at is not None:
+        age = datetime.now(timezone.utc) - latest_at
+        if age > timedelta(hours=stale_after_hours):
+            return "STALE"
+    if missing_producers or missing_event_types:
+        return "PARTIAL"
+    return "HEALTHY"
+
+
+def _sql_in(values: tuple[str, ...] | set[str]) -> str:
+    escaped = [value.replace("'", "''") for value in values]
+    return ", ".join(f"'{value}'" for value in escaped)
+
+
+def collect_kafka_pipeline_health(
+    game_id: int,
+    lookback_days: int,
+    database: str,
+    workgroup: str,
+    region: str,
+    expected_producers: tuple[str, ...],
+    expected_event_types: tuple[str, ...],
+    stale_after_hours: int = 24,
+) -> KafkaPipelineHealthSummary:
+    try:
+        start_date = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days - 1)
+        ).date()
+        infra_types_sql = _sql_in(KAFKA_INFRA_AUDIT_EVENT_TYPES)
+        query = f"""
+        SELECT
+          event_type,
+          producer,
+          count(*) AS event_count,
+          coalesce(max(occurredAt), '') AS latest_occurred_at
+        FROM ticket_events
+        WHERE event_date >= '{start_date.isoformat()}'
+          AND (
+            gameId = {game_id}
+            OR event_type IN ({infra_types_sql})
+          )
+        GROUP BY event_type, producer
+        """
+        rows = _run_athena_query_rows(query, database, workgroup, region)
+        producer_counts: dict[str, int] = {}
+        event_type_counts: dict[str, int] = {}
+        latest_values: list[str] = []
+        total_events = 0
+        for row in rows:
+            if len(row) < 4:
+                continue
+            event_type, producer, count_text, latest = row[:4]
+            count = int(count_text or 0)
+            total_events += count
+            if producer:
+                producer_counts[producer] = producer_counts.get(producer, 0) + count
+            if event_type:
+                event_type_counts[event_type] = event_type_counts.get(event_type, 0) + count
+            if latest:
+                latest_values.append(latest)
+
+        latest_occurred_at = max(latest_values) if latest_values else None
+        missing_producers = tuple(
+            producer
+            for producer in expected_producers
+            if producer_counts.get(producer, 0) == 0
+        )
+        missing_event_types = tuple(
+            event_type
+            for event_type in expected_event_types
+            if event_type_counts.get(event_type, 0) == 0
+        )
+        producer_failures = event_type_counts.get("KAFKA_PRODUCE_FAILED", 0)
+        invalid_events = event_type_counts.get("KAFKA_EVENT_INVALID", 0)
+        skipped_events = event_type_counts.get("KAFKA_EVENT_SKIPPED", 0)
+        sink_completed_events = event_type_counts.get("KAFKA_S3_SINK_COMPLETED", 0)
+        status = _kafka_pipeline_status(
+            total_events,
+            missing_producers,
+            missing_event_types,
+            latest_occurred_at,
+            producer_failures,
+            invalid_events,
+            stale_after_hours,
+        )
+        return KafkaPipelineHealthSummary(
+            status=status,
+            lookback_days=lookback_days,
+            expected_producers=expected_producers,
+            expected_event_types=expected_event_types,
+            total_events=total_events,
+            latest_occurred_at=latest_occurred_at,
+            producer_counts=producer_counts,
+            event_type_counts=event_type_counts,
+            missing_producers=missing_producers,
+            missing_event_types=missing_event_types,
+            producer_failures=producer_failures,
+            invalid_events=invalid_events,
+            skipped_events=skipped_events,
+            sink_completed_events=sink_completed_events,
+            stale_after_hours=stale_after_hours,
+        )
+    except Exception as exc:
+        return KafkaPipelineHealthSummary(
+            lookback_days=lookback_days,
+            expected_producers=expected_producers,
+            expected_event_types=expected_event_types,
+            stale_after_hours=stale_after_hours,
+            error=str(exc),
+        )
 
 
 def collect_athena_inputs(
@@ -691,11 +932,18 @@ def collect_capacity_signals(
     )
 
 
+def _format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "정보 없음"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
 def markdown_report(report: dict[str, Any]) -> str:
     recommendation = report.get("recommendedPolicyEnterPerMinute")
     signals = report.get("capacitySignals") or {}
     sqs_worker = report.get("sqsWorker") or {}
     valkey_status = report.get("valkeyStatus") or {}
+    kafka_health = report.get("kafkaPipelineHealth") or {}
     sqs_oldest_age = sqs_worker.get("oldest_message_age_seconds")
     sqs_oldest_age_text = (
         f"{sqs_oldest_age}초" if sqs_oldest_age is not None else "정보 없음"
@@ -715,6 +963,8 @@ def markdown_report(report: dict[str, Any]) -> str:
         + int(signals.get("stop_applied") or 0)
         + int(signals.get("throttle_recovered") or 0)
     )
+    missing_producers = kafka_health.get("missing_producers") or []
+    missing_event_types = kafka_health.get("missing_event_types") or []
     lines = [
         f"# Game {report['gameId']} 안전 입장량 보고서",
         "",
@@ -810,6 +1060,33 @@ def markdown_report(report: dict[str, Any]) -> str:
             "`CPU_HIGH`/`MEMORY_HIGH`는 대기열·좌석 잠금 요청 집중을, "
             "`REPLICATION_LAG`는 failover/replica 읽기 안정성 저하를 의심합니다."
         )
+    lines.extend(
+        [
+            "",
+            "## Kafka 파이프라인 상태",
+            "",
+            f"- 상태: `{kafka_health.get('status', 'UNKNOWN')}`",
+            f"- 조회 기간: `최근 {kafka_health.get('lookback_days', report.get('lookbackDays'))}일`",
+            f"- 전체 이벤트 수: `{kafka_health.get('total_events') if kafka_health.get('total_events') is not None else '정보 없음'}`",
+            f"- 최신 이벤트 시각: `{kafka_health.get('latest_occurred_at') or '정보 없음'}`",
+            f"- producer별 이벤트 수: `{_format_counts(kafka_health.get('producer_counts') or {})}`",
+            f"- event type별 이벤트 수: `{_format_counts(kafka_health.get('event_type_counts') or {})}`",
+            f"- 누락 producer: `{', '.join(missing_producers) if missing_producers else '없음'}`",
+            f"- 누락 event type: `{', '.join(missing_event_types) if missing_event_types else '없음'}`",
+            f"- producer failure: `{kafka_health.get('producer_failures') if kafka_health.get('producer_failures') is not None else '정보 없음'}`",
+            f"- invalid event: `{kafka_health.get('invalid_events') if kafka_health.get('invalid_events') is not None else '정보 없음'}`",
+            f"- skipped event: `{kafka_health.get('skipped_events') if kafka_health.get('skipped_events') is not None else '정보 없음'}`",
+            f"- sink completed event: `{kafka_health.get('sink_completed_events') if kafka_health.get('sink_completed_events') is not None else '정보 없음'}`",
+        ]
+    )
+    if kafka_health.get("error"):
+        lines.append(f"- Kafka 파이프라인 상태 조회 오류: `{kafka_health.get('error')}`")
+    else:
+        lines.append(
+            "- 해석: `NO_EVENTS`/`STALE`은 Kafka→S3/Athena 적재 지연이나 트래픽 부재를, "
+            "`PARTIAL`은 특정 producer 또는 event type 누락을, "
+            "`PRODUCER_FAILURE`/`INVALID_EVENTS`는 producer 또는 sink 품질 문제를 의심합니다."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -860,6 +1137,28 @@ def main() -> None:
         help="Do not query CloudWatch ElastiCache metrics for the Valkey status section.",
     )
     parser.add_argument(
+        "--kafka-expected-producers",
+        default="",
+        help=(
+            "Comma-separated producers expected in the event lake. "
+            "Defaults to --producer-in when present, otherwise ticket-service,waiting-room-service."
+        ),
+    )
+    parser.add_argument(
+        "--kafka-expected-event-types",
+        default=(
+            "WAITING_ENTERED,ACCESS_TOKEN_ISSUED,"
+            "RESERVATION_REQUESTED,RESERVATION_CONFIRMED"
+        ),
+        help="Comma-separated event types expected for a healthy capacity pipeline.",
+    )
+    parser.add_argument("--kafka-stale-after-hours", type=int, default=24)
+    parser.add_argument(
+        "--skip-kafka-pipeline-health",
+        action="store_true",
+        help="Do not query Athena event lake counts for the Kafka pipeline health section.",
+    )
+    parser.add_argument(
         "--producer-filter",
         help="Only analyze events from this producer, for example capacity-load-test.",
     )
@@ -878,6 +1177,10 @@ def main() -> None:
     )
     valkey_cluster_ids = _csv_tuple(args.valkey_cluster_ids)
     valkey_replica_cluster_ids = _csv_tuple(args.valkey_replica_cluster_ids)
+    kafka_expected_producers = _csv_tuple(args.kafka_expected_producers) or (
+        producer_filters or ("ticket-service", "waiting-room-service")
+    )
+    kafka_expected_event_types = _csv_tuple(args.kafka_expected_event_types)
     inputs = collect_athena_inputs(
         args.game_id,
         args.lookback_days,
@@ -940,12 +1243,32 @@ def main() -> None:
             args.valkey_eviction_threshold,
         )
     )
+    kafka_pipeline_health = (
+        KafkaPipelineHealthSummary(
+            lookback_days=args.lookback_days,
+            expected_producers=kafka_expected_producers,
+            expected_event_types=kafka_expected_event_types,
+            stale_after_hours=args.kafka_stale_after_hours,
+        )
+        if args.skip_kafka_pipeline_health
+        else collect_kafka_pipeline_health(
+            args.game_id,
+            args.lookback_days,
+            args.database,
+            args.workgroup,
+            args.region,
+            kafka_expected_producers,
+            kafka_expected_event_types,
+            args.kafka_stale_after_hours,
+        )
+    )
     report = calculate_recommendation(
         inputs,
         args.minimum_samples,
         capacity_signals=capacity_signals,
         sqs_worker=sqs_worker,
         valkey_status=valkey_status,
+        kafka_pipeline_health=kafka_pipeline_health,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

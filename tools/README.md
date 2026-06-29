@@ -81,6 +81,7 @@ Slack 메시지에는 다음 정보가 포함됩니다.
 - Kafka `capacity.signals` 기반 최근 감속/복구 신호
 - SQS `ticket-confirm-queue` / `ticket-confirm-dlq` 기반 worker 처리 상태
 - CloudWatch `AWS/ElastiCache` 기반 Valkey/좌석 잠금 계층 상태
+- Athena event lake 기반 Kafka pipeline health
 
 GitHub Actions 자동 알림:
 
@@ -118,6 +119,9 @@ CAPACITY_ADVISOR_VALKEY_CPU_THRESHOLD_PERCENT=80
 CAPACITY_ADVISOR_VALKEY_MEMORY_THRESHOLD_PERCENT=80
 CAPACITY_ADVISOR_VALKEY_REPLICATION_LAG_THRESHOLD_SECONDS=5
 CAPACITY_ADVISOR_VALKEY_EVICTION_THRESHOLD=0
+CAPACITY_ADVISOR_KAFKA_EXPECTED_PRODUCERS=ticket-service,waiting-room-service
+CAPACITY_ADVISOR_KAFKA_EXPECTED_EVENT_TYPES=WAITING_ENTERED,ACCESS_TOKEN_ISSUED,RESERVATION_REQUESTED,RESERVATION_CONFIRMED
+CAPACITY_ADVISOR_KAFKA_STALE_AFTER_HOURS=24
 ```
 
 `CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS`를 지정하지 않으면 workflow가 CloudWatch `AWS/RDS DatabaseConnections` 최근 값을 조회합니다.
@@ -162,6 +166,28 @@ python tools/ticket_capacity_advisor.py `
   --current-policy 40 `
   --current-db-connections 22 `
   --skip-valkey-status
+```
+
+Kafka pipeline health는 Athena `ticket_events` event lake를 조회해 Kafka→S3/Athena 분석 경로가 Capacity Advisor에 필요한 표본을 제공하고 있는지 확인합니다.
+
+| 상태 | 의미 |
+| --- | --- |
+| `HEALTHY` | 기대 producer와 핵심 event type이 모두 존재하고 최신 이벤트가 기준 이내 |
+| `NO_EVENTS` | 조회 기간에 event lake 이벤트가 없음 |
+| `STALE` | 최신 이벤트가 `kafka-stale-after-hours` 기준보다 오래됨 |
+| `PARTIAL` | 특정 producer 또는 핵심 event type이 누락됨 |
+| `PRODUCER_FAILURE` | `KAFKA_PRODUCE_FAILED` audit event가 감지됨 |
+| `INVALID_EVENTS` | `KAFKA_EVENT_INVALID` audit event가 감지됨 |
+| `UNKNOWN` | Kafka pipeline health 조회 실패 또는 생략 |
+
+로컬에서 Kafka pipeline health 조회를 생략하려면 다음 옵션을 추가합니다.
+
+```powershell
+python tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 22 `
+  --skip-kafka-pipeline-health
 ```
 
 기본 schedule은 매일 09:00 KST입니다. 발표 캡처용으로는 Actions에서 `Capacity Advisor Slack Report`를 수동 실행한 뒤 Slack 메시지와 workflow artifact를 함께 캡처하면 좋습니다.

@@ -23,19 +23,30 @@ def _value(value: Any, default: str = "정보 없음") -> str:
     return str(value)
 
 
+def _format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "정보 없음"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
 def status_emoji(report: dict[str, Any]) -> str:
     status = report.get("status")
     pressure = report.get("dbPressureLevel")
     sqs_status = (report.get("sqsWorker") or {}).get("status")
     valkey_status = (report.get("valkeyStatus") or {}).get("status")
+    kafka_status = (report.get("kafkaPipelineHealth") or {}).get("status")
     if status == "INSUFFICIENT_DATA":
         return ":warning:"
+    if kafka_status == "PRODUCER_FAILURE":
+        return ":rotating_light:"
     if valkey_status in {"EVICTIONS_DETECTED", "REPLICATION_LAG"}:
         return ":rotating_light:"
     if sqs_status == "DLQ_DETECTED":
         return ":rotating_light:"
     if pressure in {"WARNING", "CRITICAL", "STOP"}:
         return ":rotating_light:"
+    if kafka_status in {"NO_EVENTS", "STALE", "PARTIAL", "INVALID_EVENTS"}:
+        return ":large_yellow_circle:"
     if valkey_status in {"CPU_HIGH", "MEMORY_HIGH"}:
         return ":large_yellow_circle:"
     if sqs_status in {"BACKLOG", "DELAYED"}:
@@ -53,6 +64,7 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     signals = report.get("capacitySignals") or {}
     sqs_worker = report.get("sqsWorker") or {}
     valkey_status = report.get("valkeyStatus") or {}
+    kafka_health = report.get("kafkaPipelineHealth") or {}
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -172,6 +184,25 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     if valkey_status.get("error"):
         valkey_text += f"\n조회 오류: `{valkey_status.get('error')}`"
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Valkey/좌석 잠금 계층 상태*\n{valkey_text}"}})
+
+    kafka_missing_producers = kafka_health.get("missing_producers") or []
+    kafka_missing_event_types = kafka_health.get("missing_event_types") or []
+    kafka_text = (
+        f"상태 `{kafka_health.get('status', 'UNKNOWN')}` / "
+        f"events `{_value(kafka_health.get('total_events'))}` / "
+        f"latest `{_value(kafka_health.get('latest_occurred_at'))}`\n"
+        f"producer counts `{_format_counts(kafka_health.get('producer_counts') or {})}`\n"
+        f"event type counts `{_format_counts(kafka_health.get('event_type_counts') or {})}`\n"
+        f"missing producers `{', '.join(kafka_missing_producers) if kafka_missing_producers else '없음'}` / "
+        f"missing event types `{', '.join(kafka_missing_event_types) if kafka_missing_event_types else '없음'}`\n"
+        f"producer failures `{_value(kafka_health.get('producer_failures'))}` / "
+        f"invalid `{_value(kafka_health.get('invalid_events'))}` / "
+        f"skipped `{_value(kafka_health.get('skipped_events'))}` / "
+        f"sink completed `{_value(kafka_health.get('sink_completed_events'))}`"
+    )
+    if kafka_health.get("error"):
+        kafka_text += f"\n조회 오류: `{kafka_health.get('error')}`"
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Kafka 파이프라인 상태*\n{kafka_text}"}})
 
     if report_url:
         blocks.append(

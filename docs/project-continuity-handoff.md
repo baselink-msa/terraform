@@ -88,7 +88,7 @@ Outbox/Kafka 이벤트 파이프라인을 설계·구현·검증한 담당자
 | DB Connection Pool | 검증 완료 | Spring/Python/KEDA connection budget과 RDS-aware 감속 구현 |
 | 운영 알림 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림, Capacity Advisor Slack 리포트 workflow 구현 |
 | Outbox Event Pipeline | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor 기반 구현 |
-| Kafka/MSK 개인 프로젝트 | Phase 4 일부 완료 | MSK Serverless, topic 5개, ticket/waiting/capacity signal publish, Kafka→S3 sink, Capacity Advisor Slack 리포트, SQS/Worker와 Valkey 상태 섹션 구현 |
+| Kafka/MSK 개인 프로젝트 | Phase 4 일부 완료 | MSK Serverless, topic 5개, ticket/waiting/capacity signal publish, Kafka→S3 sink, Capacity Advisor Slack 리포트, SQS/Worker·Valkey·Kafka pipeline health 섹션 구현 |
 | 발표 문서 | 진행 중 | 담당 파트 발표 outline 작성, Slack 리포트/알림 채널/확장 로드맵 보강 중 |
 
 ## 5. 최근 완료한 핵심 작업
@@ -246,6 +246,7 @@ Kafka 도입 목적:
 - GitHub Actions 기반 Capacity Advisor Slack report workflow 구현 완료
 - Capacity Advisor가 `ticket-confirm-queue`와 `ticket-confirm-dlq`의 SQS 상태를 조회해 리포트와 Slack 메시지에 포함하도록 구현 완료
 - Capacity Advisor가 Valkey CloudWatch metric을 조회해 CPU, memory, eviction, replication lag 상태를 리포트와 Slack 메시지에 포함하도록 구현 완료
+- Capacity Advisor가 Athena event lake를 조회해 Kafka pipeline health를 리포트와 Slack 메시지에 포함하도록 구현 완료
 
 현재 확인된 bootstrap broker:
 
@@ -303,6 +304,7 @@ Phase 4 일부 완료
 -> Capacity Advisor Slack report workflow 구현
 -> Capacity Advisor SQS/Worker 상태 섹션 구현
 -> Capacity Advisor Valkey/좌석 잠금 계층 상태 섹션 구현
+-> Capacity Advisor Kafka pipeline health 섹션 구현
 ```
 
 다음 단계:
@@ -312,7 +314,6 @@ Phase 4 일부 완료
 -> project-continuity-handoff 최신화
 -> ops-alarm-runbook 최신화
 -> 발표용 outline 최신화
--> Capacity Advisor 리포트에 Kafka pipeline 상태를 추가할 설계/구현
 -> seat-lock-service Kafka 이벤트 발행 여부 검토
 -> 필요 시 CAPACITY_ADVISOR_SLACK_WEBHOOK_URL Secret 추가 후 실제 Slack 전송 검증
 ```
@@ -447,11 +448,29 @@ SEAT_UNLOCKED
 - Kafka 개인 프로젝트가 대기열 처리량 계산에만 머무르지 않고 좌석 선점/Valkey 안정성까지 확장된다.
 - 심사위원에게 인프라 관점의 이벤트 스트리밍 활용 사례로 설명하기 좋다.
 
-### P3: Kafka 파이프라인 자체 상태 리포트
+### 완료: Kafka 파이프라인 자체 상태 리포트
 
 목표:
 
 - Kafka producer 실패, sink 지연, invalid event, S3 적재 완료 여부를 리포트에 포함한다.
+
+구현 결과:
+
+- `tools/ticket_capacity_advisor.py`에 `KafkaPipelineHealthSummary`를 추가했다.
+- Athena `ticket_events` event lake를 조회해 전체 이벤트 수, 최신 이벤트 시각, producer별 count, event type별 count를 계산한다.
+- 기본 기대 producer는 `ticket-service`, `waiting-room-service`다.
+- 기본 기대 event type은 `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED`, `RESERVATION_REQUESTED`, `RESERVATION_CONFIRMED`다.
+- 누락 producer/event type이 있으면 `PARTIAL`로 표시한다.
+- event lake에 이벤트가 없으면 `NO_EVENTS`, 최신 이벤트가 오래됐으면 `STALE`로 표시한다.
+- `infra.audit.events`가 `KAFKA_PRODUCE_FAILED`, `KAFKA_EVENT_INVALID`, `KAFKA_EVENT_SKIPPED`, `KAFKA_S3_SINK_COMPLETED`를 적재하면 같은 섹션에서 count를 보여줄 수 있다.
+- Markdown 리포트와 Slack payload에 `Kafka 파이프라인 상태` 섹션을 추가했다.
+
+검증:
+
+```text
+python -B -m unittest discover tools\tests
+34 tests OK
+```
 
 추천 이벤트:
 
@@ -916,6 +935,7 @@ Capacity Advisor Slack report 현재 상태:
 - Slack payload에 추천 입장량, DB 상태, 표본 수, 판단 근거, 최근 `capacity.signals` 포함
 - SQS/Worker backlog, DLQ 상태 포함
 - Valkey engine CPU, memory, evictions, replication lag 상태 포함
+- Kafka pipeline health 포함
 - `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret이 없으면 dry-run payload 출력
 
 Secret 관련 주의:
@@ -941,7 +961,7 @@ Kafka 리포트 확장 후보:
    - seat lock requested/locked/failed/expired/unlocked
    - Valkey 부하와 좌석 선점 실패 상관관계 분석
 
-4. Kafka 파이프라인 자체 상태
+4. Kafka 파이프라인 자체 상태 - Athena event lake 기반 1차 구현 완료
    - producer failure, sink delay, invalid event, sink completed
    - 표본 부족 원인을 실제 트래픽 부족과 파이프라인 지연으로 구분
 
@@ -968,8 +988,8 @@ SQS DLQ 발생
 ```text
 1. CAPACITY_ADVISOR_SLACK_WEBHOOK_URL Secret 추가 여부 결정
 2. Slack report workflow 수동 실행으로 캡처 확보
-3. Kafka pipeline health 섹션 추가
-4. seat-lock-service Kafka 이벤트 발행 설계/구현
-5. SQS/Worker 상태를 Kafka `infra.audit.events` 이벤트 이력으로 확장
+3. seat-lock-service Kafka 이벤트 발행 설계/구현
+4. SQS/Worker 상태를 Kafka `infra.audit.events` 이벤트 이력으로 확장
+5. 실제 Kafka sink 실행 결과를 `infra.audit.events`로 적재
 6. 실제 부하테스트 결과로 Capacity Advisor 추천값 보정
 ```
