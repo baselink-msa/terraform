@@ -1577,3 +1577,117 @@ P1. 조회 API 중심 부하테스트로 Read Replica 필요성 판단
 P1. connection storm 시나리오로 RDS Proxy 필요성 판단
 P2. 발표용 캡처 목록 최종 정리
 ```
+
+## 2026-06-29 추가 handoff: Read Replica / RDS Proxy 부하 검증 완료
+
+상세 문서:
+
+```text
+docs/read-replica-rds-proxy-loadtest-20260629.md
+```
+
+이번 작업의 목적:
+
+- Read Replica와 RDS Proxy를 감으로 도입하지 않고 실제 부하 지표로 필요성을 판단한다.
+- 발표에서 “왜 도입했는가”뿐 아니라 “왜 지금은 도입하지 않았는가”도 근거 있게 설명할 수 있게 한다.
+- 현재 DB 보호 구조가 기본 부하에서 정상적으로 동작하는지 확인한다.
+
+검증 중 확인한 특이사항:
+
+- 2026-06-29 검증 시점에 `https://baselink.kro.kr/api/games`가 API JSON이 아니라 frontend S3 `index.html`을 반환했다.
+- ALB 직접 접근도 timeout이 발생했다.
+- 따라서 이번 Read Replica/RDS Proxy 판단은 CloudFront/ALB 라우팅 문제를 제외하고, EKS 내부 k6 Job으로 `game-service`, `seat-lock-service`, `ticket-service`를 직접 호출해 수행했다.
+
+Read Replica 검증:
+
+```text
+Job: k6-read-replica-check-20260629
+VUS: 80
+Duration: 2m
+Window: 2026-06-29T11:28:36Z ~ 2026-06-29T11:30:45Z
+Target:
+  GET game-service /api/games
+  GET game-service /api/games/1/seats
+```
+
+결과:
+
+| 항목 | 결과 |
+| --- | ---: |
+| HTTP requests | 72,148 |
+| HTTP failed | 0.00% |
+| Checks | 100.00% |
+| 전체 p95 | 171.40ms |
+| games p95 | 168.31ms |
+| seats p95 | 174.09ms |
+| RDS CPU max | 38.19% |
+| RDS DatabaseConnections max | 22 |
+| RDS ReadIOPS max | 1.35/s |
+| RDS ReadLatency max | 8.9ms |
+
+판단:
+
+```text
+현재는 Read Replica 필수 도입 근거가 약하다.
+조회 API p95와 실패율이 안정적이고, RDS ReadIOPS/ReadLatency가 낮다.
+추후 조회 API p95/p99가 지속 상승하거나 RDS read 계층이 병목으로 확인될 때 조건부로 도입한다.
+```
+
+RDS Proxy 검증:
+
+```text
+Job: k6-rds-proxy-check-20260629
+VUS: 30
+Duration: 2m
+Window: 2026-06-29T11:33:33Z ~ 2026-06-29T11:35:39Z
+Target flow:
+  games 조회
+  available seats 조회
+  seat-lock 생성
+  ticket reserve
+  ticket detail
+  ticket cancel
+```
+
+결과:
+
+| 항목 | 결과 |
+| --- | ---: |
+| HTTP requests | 31,086 |
+| HTTP failed | 1.76% |
+| Checks | 97.90% |
+| 전체 p95 | 191.01ms |
+| seat-lock create p95 | 348.34ms |
+| ticket reserve p95 | 174.55ms |
+| ticket detail p95 | 155.77ms |
+| ticket cancel p95 | 141.67ms |
+| RDS DatabaseConnections max | 33 |
+| RDS CPU max | 16.49% |
+| RDS WriteIOPS max | 149.81/s |
+| RDS WriteLatency max | 3.78ms |
+| ticket-confirm-queue | visible 0 / not visible 0 / delayed 0 |
+| ticket-confirm-dlq | visible 0 / not visible 0 / delayed 0 |
+
+판단:
+
+```text
+현재는 RDS Proxy 필수 도입 근거가 약하다.
+DatabaseConnections가 33/60 수준으로 여유가 있고, WriteLatency도 낮다.
+실패는 대부분 seat-lock create timeout/경합 쪽이며 ticket-service DB connection 부족 증상은 아니다.
+추후 DatabaseConnections가 50~60 근처까지 튀거나 HikariPool timeout이 보일 때 조건부로 도입한다.
+```
+
+발표용 핵심 메시지:
+
+```text
+Read Replica와 RDS Proxy는 좋은 안정성 옵션이지만, 무조건 넣으면 비용과 복잡도가 늘어난다.
+이번 부하 검증에서는 조회 API와 예매 write path를 분리해 RDS 병목 여부를 확인했다.
+현재 병목은 RDS read 또는 DB connection storm이 아니므로,
+Read Replica와 RDS Proxy는 지금 당장 필수가 아니라 조건부 고도화 후보로 정리했다.
+```
+
+남은 후속 작업:
+
+- CloudFront `/api/*` 라우팅 정상화 확인은 프론트/라우팅 담당자와 별도로 진행한다.
+- seat-lock create timeout은 Valkey/좌석 잠금 경합 관점의 별도 고도화 후보로 정리한다.
+- CloudFront 라우팅이 복구되면 외부 사용자 경로 기준 smoke/load 테스트를 한 번 더 수행하면 좋다.
