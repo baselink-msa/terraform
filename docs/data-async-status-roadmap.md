@@ -60,7 +60,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | --- | ---: | --- |
 | 팀 핵심 기능 구현 | 약 90% | 데이터 저장·비동기 처리·복구·DB 보호 기능 구현 완료 |
 | 팀 운영 검증·문서 | 약 90% | 운영 알림 문서 최신화와 Capacity Advisor 실 Slack 전송 검증 완료, 전체 부하 테스트 캡처와 리허설이 남음 |
-| 개인 프로젝트 MVP | 약 99% | 실제 dev 서비스 표본 21건 기준 Kafka→S3/Athena→Capacity Advisor 흐름과 SQS/Valkey/Kafka pipeline 상태 `HEALTHY` 검증 완료, 발표용 Slack 캡처가 남음 |
+| 개인 프로젝트 MVP | 약 99% | 실제 dev 서비스 표본 21건 기준 Kafka→S3/Athena→Capacity Advisor 흐름과 SQS/Valkey/Kafka pipeline 상태 `HEALTHY` 및 Slack report 캡처 검증 완료 |
 | 발표 준비 | 약 75% | 발표 outline과 인수인계 문서 보강 중이며 캡처·아키텍처 그림·리허설 필요 |
 
 ### 2026-06-29 업데이트 요약
@@ -74,6 +74,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 - Kafka pipeline health는 Athena event lake 기반으로 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
 - `seat-lock-service` 좌석 잠금 이벤트는 Kafka `reservation.lifecycle.events` 발행과 Kafka→S3 sink 허용 event type 반영까지 1차 구현됐다.
 - 2026-06-29 실제 dev 서비스 표본 21건 기준 Capacity Advisor가 `RECOMMENDED`, SQS `HEALTHY`, Valkey `HEALTHY`, Kafka pipeline `HEALTHY`를 산출했다.
+- GitHub Actions `Capacity Advisor Slack Report` 수동 실행으로 Slack 메시지에서도 산출 지표와 `HEALTHY` 상태 표시를 확인했다.
 - 다음 고도화 후보는 seat-lock 이벤트 dev E2E 검증과 `infra.audit.events` 기반 sink/producer 상태 이력화다.
 
 ## 4. RDS PostgreSQL

@@ -732,6 +732,10 @@ Advisor 결과:
 - Kafka pipeline은 기대 producer와 event type이 모두 존재해 `HEALTHY`로 판단했다.
 - 추천값이 `1명/분`인 이유는 현재 표본에서 관측된 안정 예매 확정 처리량이 분당 1건 수준이기 때문이다. 이는 "무조건 많이 입장"시키는 기능이 아니라, 실제 처리량이 낮게 관측되면 보수적으로 추천하는 운영 의사결정 보조 도구임을 보여준다.
 
-다음 검증:
+Slack report 수동 실행 검증:
 
-- GitHub Actions `Capacity Advisor Slack Report`를 다시 수동 실행해 Slack 메시지에서도 동일하게 `RECOMMENDED`, SQS `HEALTHY`, Valkey `HEALTHY`, Kafka pipeline `HEALTHY`가 표시되는지 확인한다.
+- GitHub Actions `Capacity Advisor Slack Report`를 수동 실행했다.
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28355999346`
+- Slack 메시지에서도 `RECOMMENDED`, SQS `HEALTHY`, Valkey `HEALTHY`, Kafka pipeline `HEALTHY`가 표시되었다.
+- Slack 메시지의 산출 지표에 안정 확정 처리량 `1.0건/분`, 예약 확정률 `100.0%`, 안전계수 `0.8`, 대기시간 보정 `1.0`, 관측 입장량 상한 `40.0명/분`이 표시되었다.
+- 이 캡처는 발표에서 "운영자가 Slack만 보고 추천값과 그 이유, 주변 인프라 상태를 함께 확인할 수 있다"는 근거로 사용할 수 있다.
