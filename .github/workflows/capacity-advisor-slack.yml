@@ -1,0 +1,150 @@
+name: Capacity Advisor Slack Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_id:
+        description: "Game id to analyze"
+        required: true
+        default: "9001"
+      current_policy:
+        description: "Current waiting-room policy enter-per-minute"
+        required: true
+        default: "40"
+      current_db_connections:
+        description: "Optional DB connections override. Leave empty to read CloudWatch."
+        required: false
+        default: ""
+      db_instance_id:
+        description: "RDS DBInstanceIdentifier used for CloudWatch DatabaseConnections."
+        required: true
+        default: "baselink-dev-postgres"
+      lookback_days:
+        description: "Athena lookback window"
+        required: true
+        default: "1"
+      minimum_samples:
+        description: "Minimum samples per event type"
+        required: true
+        default: "20"
+      producer_in:
+        description: "Comma-separated producers to analyze"
+        required: true
+        default: "ticket-service,waiting-room-service"
+  schedule:
+    # 00:00 UTC = 09:00 KST
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: capacity-advisor-slack-report
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  report:
+    name: Generate and notify Capacity Advisor report
+    runs-on: [self-hosted, baselink-dev, iac]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve report parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "GAME_ID=${{ inputs.game_id || vars.CAPACITY_ADVISOR_GAME_ID || '9001' }}" >> "$GITHUB_ENV"
+          echo "CURRENT_POLICY=${{ inputs.current_policy || vars.CAPACITY_ADVISOR_CURRENT_POLICY || '40' }}" >> "$GITHUB_ENV"
+          echo "LOOKBACK_DAYS=${{ inputs.lookback_days || vars.CAPACITY_ADVISOR_LOOKBACK_DAYS || '1' }}" >> "$GITHUB_ENV"
+          echo "MINIMUM_SAMPLES=${{ inputs.minimum_samples || vars.CAPACITY_ADVISOR_MINIMUM_SAMPLES || '20' }}" >> "$GITHUB_ENV"
+          echo "PRODUCER_IN=${{ inputs.producer_in || vars.CAPACITY_ADVISOR_PRODUCER_IN || 'ticket-service,waiting-room-service' }}" >> "$GITHUB_ENV"
+          echo "DB_INSTANCE_ID=${{ inputs.db_instance_id || vars.CAPACITY_ADVISOR_DB_INSTANCE_ID || 'baselink-dev-postgres' }}" >> "$GITHUB_ENV"
+          echo "DB_CONNECTIONS_OVERRIDE=${{ inputs.current_db_connections || '' }}" >> "$GITHUB_ENV"
+
+      - name: Resolve current DB connections
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${DB_CONNECTIONS_OVERRIDE}" ]; then
+            echo "CURRENT_DB_CONNECTIONS=${DB_CONNECTIONS_OVERRIDE}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          end_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          start_time="$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+          value="$(aws cloudwatch get-metric-statistics \
+            --namespace AWS/RDS \
+            --metric-name DatabaseConnections \
+            --dimensions Name=DBInstanceIdentifier,Value="${DB_INSTANCE_ID}" \
+            --statistics Maximum \
+            --period 60 \
+            --start-time "${start_time}" \
+            --end-time "${end_time}" \
+            --region "${AWS_REGION}" \
+            --query 'Datapoints | sort_by(@,&Timestamp)[-1].Maximum' \
+            --output text 2>/dev/null || true)"
+
+          if [ -z "${value}" ] || [ "${value}" = "None" ]; then
+            value="${{ vars.CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS || '0' }}"
+          fi
+
+          value="${value%.*}"
+          echo "CURRENT_DB_CONNECTIONS=${value}" >> "$GITHUB_ENV"
+
+      - name: Generate Capacity Advisor report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python tools/ticket_capacity_advisor.py \
+            --game-id "${GAME_ID}" \
+            --current-policy "${CURRENT_POLICY}" \
+            --current-db-connections "${CURRENT_DB_CONNECTIONS}" \
+            --lookback-days "${LOOKBACK_DAYS}" \
+            --minimum-samples "${MINIMUM_SAMPLES}" \
+            --producer-in "${PRODUCER_IN}"
+
+      - name: Send Slack notification
+        shell: bash
+        env:
+          CAPACITY_ADVISOR_SLACK_WEBHOOK_URL: ${{ secrets.CAPACITY_ADVISOR_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          report_json="capacity-reports/game-${GAME_ID}-capacity.json"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          if [ -z "${CAPACITY_ADVISOR_SLACK_WEBHOOK_URL}" ]; then
+            echo "::warning::CAPACITY_ADVISOR_SLACK_WEBHOOK_URL is not configured. Printing dry-run payload."
+            python tools/slack_capacity_advisor_notify.py \
+              --report-json "${report_json}" \
+              --report-url "${run_url}" \
+              --dry-run
+            exit 0
+          fi
+
+          python tools/slack_capacity_advisor_notify.py \
+            --report-json "${report_json}" \
+            --report-url "${run_url}"
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-advisor-report
+          path: |
+            capacity-reports/game-*-capacity.json
+            capacity-reports/game-*-capacity.md

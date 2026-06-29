@@ -48,6 +48,68 @@ python tools/ticket_capacity_advisor.py `
 - 현재 DB 압력은 장기 정책 추천값을 다시 깎지 않고 `effectiveEnterPerMinuteNow`에만 반영합니다.
 - 결과는 운영자 검토용이며 대기열 설정을 자동으로 변경하지 않습니다.
 
+## Capacity Advisor Slack 알림
+
+운영자가 리포트 파일을 직접 열지 않아도 추천값과 최근 감속/복구 신호를 Slack에서 확인할 수 있습니다.
+
+먼저 dry-run으로 Slack payload를 확인합니다.
+
+```powershell
+python tools/slack_capacity_advisor_notify.py `
+  --report-json capacity-reports/game-9001-capacity.json `
+  --report-url https://github.com/baselink-msa/terraform/actions `
+  --dry-run
+```
+
+실제 Slack 전송:
+
+```powershell
+$env:CAPACITY_ADVISOR_SLACK_WEBHOOK_URL="<slack-incoming-webhook-url>"
+
+python tools/slack_capacity_advisor_notify.py `
+  --report-json capacity-reports/game-9001-capacity.json
+```
+
+Slack 메시지에는 다음 정보가 포함됩니다.
+
+- 추천 입장량
+- 현재 정책
+- 현재 DB 반영 입장량
+- DB pressure level과 connection 수
+- 이벤트 표본 수
+- 판단 근거
+- Kafka `capacity.signals` 기반 최근 감속/복구 신호
+
+GitHub Actions 자동 알림:
+
+```text
+.github/workflows/capacity-advisor-slack.yml
+```
+
+필수 GitHub Secret:
+
+```text
+CAPACITY_ADVISOR_SLACK_WEBHOOK_URL
+```
+
+기존 AWS 인증에는 `AWS_TERRAFORM_ROLE_ARN`을 재사용합니다.
+
+선택 Repository Variables:
+
+```text
+CAPACITY_ADVISOR_GAME_ID=9001
+CAPACITY_ADVISOR_CURRENT_POLICY=40
+CAPACITY_ADVISOR_LOOKBACK_DAYS=1
+CAPACITY_ADVISOR_MINIMUM_SAMPLES=20
+CAPACITY_ADVISOR_PRODUCER_IN=ticket-service,waiting-room-service
+CAPACITY_ADVISOR_DB_INSTANCE_ID=baselink-dev-postgres
+CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS=22
+```
+
+`CAPACITY_ADVISOR_CURRENT_DB_CONNECTIONS`를 지정하지 않으면 workflow가 CloudWatch `AWS/RDS DatabaseConnections` 최근 값을 조회합니다.
+
+기본 schedule은 매일 09:00 KST입니다. 발표 캡처용으로는 Actions에서 `Capacity Advisor Slack Report`를 수동 실행한 뒤 Slack 메시지와 workflow artifact를 함께 캡처하면 좋습니다.
+
 ## Kafka to S3 sink runner
 
 Kafka topic의 이벤트를 기존 S3/Athena event lake에 저장합니다. 같은 event envelope과 같은 S3 key를 사용하므로 기존 Lambda writer와 Athena table, Capacity Advisor를 그대로 재사용할 수 있습니다.
@@ -68,7 +130,7 @@ python tools/kafka_s3_sink.py `
   --consume `
   --bootstrap-server boot-twqovxpi.c3.kafka-serverless.ap-northeast-2.amazonaws.com:9098 `
   --bucket baselink-dev-ticket-events-740831361032 `
-  --topics ticket.domain.events waiting.operational.events `
+  --topics ticket.domain.events waiting.operational.events capacity.signals `
   --producer-in ticket-service,waiting-room-service
 ```
 
