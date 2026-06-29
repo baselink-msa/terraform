@@ -103,6 +103,28 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
         f"예약 요청 `{sample.get('reservationRequested', 0)}` / "
         f"예약 확정 `{sample.get('reservationConfirmed', 0)}`"
     )
+    calculation = report.get("calculation") or {}
+    calculation_items = []
+    if calculation:
+        calculation_items = [
+            (
+                "안정 확정 처리량",
+                f"{_value(calculation.get('stableConfirmedPerMinute'))}건/분",
+            ),
+            (
+                "예약 확정률",
+                f"{_value(calculation.get('reservationConversionPercent'))}%",
+            ),
+            ("안전계수", _value(calculation.get("safetyFactor"))),
+            ("대기시간 보정", _value(calculation.get("waitingFactor"))),
+            (
+                "관측 입장량 상한",
+                f"{_value(calculation.get('averageObservedEffectiveEnterPerMinute'))}명/분",
+            ),
+        ]
+    calculation_text = " / ".join(
+        f"{label} `{value}`" for label, value in calculation_items
+    )
     reasons = report.get("reasons") or []
     reason_text = "\n".join(f"• {reason}" for reason in reasons[:4])
     if len(reasons) > 4:
@@ -113,6 +135,17 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
         {"type": "section", "fields": fields},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*표본*\n{sample_text}"}},
     ]
+
+    if calculation_text:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*산출 지표*\n{calculation_text}",
+                },
+            }
+        )
 
     if reason_text:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*판단 근거*\n{reason_text}"}})
