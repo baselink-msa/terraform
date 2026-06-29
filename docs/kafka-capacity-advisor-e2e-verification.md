@@ -739,3 +739,79 @@ Slack report 수동 실행 검증:
 - Slack 메시지에서도 `RECOMMENDED`, SQS `HEALTHY`, Valkey `HEALTHY`, Kafka pipeline `HEALTHY`가 표시되었다.
 - Slack 메시지의 산출 지표에 안정 확정 처리량 `1.0건/분`, 예약 확정률 `100.0%`, 안전계수 `0.8`, 대기시간 보정 `1.0`, 관측 입장량 상한 `40.0명/분`이 표시되었다.
 - 이 캡처는 발표에서 "운영자가 Slack만 보고 추천값과 그 이유, 주변 인프라 상태를 함께 확인할 수 있다"는 근거로 사용할 수 있다.
+
+## 2026-06-29 seat-lock Kafka E2E 검증
+
+목적:
+
+- 좌석 잠금 계층도 Kafka 이벤트 스트리밍 플랫폼에 연결되었는지 확인한다.
+- `seat-lock-service`가 발행한 이벤트가 Kafka topic을 거쳐 S3 event lake에 저장되고 Athena에서 조회되는지 검증한다.
+- Valkey 기반 좌석 잠금 흐름을 Capacity Advisor/운영 리포트가 나중에 재사용할 수 있는 분석 이벤트로 남긴다.
+
+검증 흐름:
+
+```text
+seat-lock-service API
+-> reservation.lifecycle.events
+-> Kafka S3 sink runner
+-> S3 ticket-events partition
+-> Glue/Athena ticket_events
+```
+
+검증 중 확인한 이슈:
+
+- `seat-lock-service`는 Kafka publish metric 기준 이벤트를 정상 발행했다.
+- Kafka S3 sink runner도 `accepted=5`, `written=5`로 S3 적재에 성공했다.
+- 하지만 최초 Athena 조회 결과는 0건이었다.
+- 원인은 Glue table의 partition projection `projection.event_type.values`에 seat-lock 이벤트 타입이 빠져 있었기 때문이다.
+- S3에는 파일이 있어도 projection enum에 없는 `event_type` partition은 Athena가 스캔하지 않는다.
+
+수정:
+
+- `modules/ticket-event-writer/main.tf`의 Glue projection 허용 event type에 아래 항목을 추가했다.
+  - `ADMISSION_THROTTLE_APPLIED`
+  - `ADMISSION_STOP_APPLIED`
+  - `ADMISSION_THROTTLE_RECOVERED`
+  - `SEAT_LOCK_REQUESTED`
+  - `SEAT_LOCKED`
+  - `SEAT_LOCK_FAILED`
+  - `SEAT_UNLOCKED`
+- Lambda 기반 `ticket-event-writer`의 허용 event type도 같은 목록으로 확장했다.
+- seat-lock 이벤트가 S3 key로 정상 변환되는 단위 테스트를 추가했다.
+
+검증 명령:
+
+```powershell
+python -B -m unittest modules.ticket-event-writer.tests.test_handler
+```
+
+Terraform apply 이후 실제 Glue projection:
+
+```text
+WAITING_ENTERED,
+ACCESS_TOKEN_ISSUED,
+RESERVATION_REQUESTED,
+RESERVATION_CONFIRMED,
+ADMISSION_THROTTLE_APPLIED,
+ADMISSION_STOP_APPLIED,
+ADMISSION_THROTTLE_RECOVERED,
+SEAT_LOCK_REQUESTED,
+SEAT_LOCKED,
+SEAT_LOCK_FAILED,
+SEAT_UNLOCKED
+```
+
+Athena 검증 결과:
+
+| event_type | producer | count | latest |
+| --- | --- | ---: | --- |
+| `SEAT_LOCKED` | `seat-lock-service` | 1 | `2026-06-29T07:57:30.310014051Z` |
+| `SEAT_LOCK_FAILED` | `seat-lock-service` | 1 | `2026-06-29T07:57:30.412134716Z` |
+| `SEAT_LOCK_REQUESTED` | `seat-lock-service` | 2 | `2026-06-29T07:57:30.375012452Z` |
+| `SEAT_UNLOCKED` | `seat-lock-service` | 1 | `2026-06-29T07:57:30.567262716Z` |
+
+해석:
+
+- 좌석 잠금 요청, 잠금 성공, 중복 잠금 실패, 잠금 해제 이벤트가 모두 Kafka/S3/Athena 경로에서 확인되었다.
+- seat-lock 이벤트는 이제 단순 로그가 아니라 날짜와 이벤트 타입 기준으로 조회 가능한 운영 분석 데이터가 되었다.
+- 이후 Capacity Advisor 리포트에 좌석 잠금 성공률, 실패율, 해제 흐름, Valkey 상태와의 상관관계를 추가할 수 있는 기반이 마련되었다.
