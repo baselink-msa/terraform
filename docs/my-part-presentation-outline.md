@@ -380,6 +380,7 @@ Kafka는 기존 SQS를 대체하려고 넣은 것이 아닙니다. SQS는 예매
 - Capacity Advisor report
 - 처리량과 DB 여유율 기반 안전 입장량 추천
 - SQS/Worker backlog/DLQ 상태
+- Valkey/좌석 잠금 계층 상태
 - Slack 운영 리포트
 
 검증된 이벤트:
@@ -403,7 +404,7 @@ ADMISSION_THROTTLE_RECOVERED
 발표 멘트:
 
 ```text
-사용자가 대기열에 들어오고, 입장권을 받고, 예매를 요청하고, 확정되는 전 과정을 이벤트로 기록했습니다. 이 이벤트를 Kafka에서 S3/Athena로 적재하고, Capacity Advisor가 실제 확정 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 여기에 RDS connection 압력으로 감속이 발생했는지와 SQS worker 처리 상태까지 리포트에 함께 보여주도록 확장했습니다.
+사용자가 대기열에 들어오고, 입장권을 받고, 예매를 요청하고, 확정되는 전 과정을 이벤트로 기록했습니다. 이 이벤트를 Kafka에서 S3/Athena로 적재하고, Capacity Advisor가 실제 확정 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 여기에 RDS connection 압력으로 감속이 발생했는지, SQS worker 처리 상태가 밀리는지, Valkey에서 좌석 lock/access token 같은 TTL 상태가 위험해질 조짐이 있는지까지 리포트에 함께 보여주도록 확장했습니다.
 ```
 
 캡처 후보:
@@ -513,6 +514,7 @@ ADMISSION_THROTTLE_RECOVERED
 - Kafka -> S3/Athena -> Capacity Advisor E2E
 - Capacity Advisor Slack report workflow
 - SQS/Worker 상태 리포트 섹션
+- Valkey/좌석 잠금 계층 상태 리포트 섹션
 - 부하테스트 검증 계획
 
 남은 작업:
@@ -520,7 +522,7 @@ ADMISSION_THROTTLE_RECOVERED
 - 실제 k6 부하테스트 실행
 - 부하 결과 기반 RDS Proxy / Read Replica 판단
 - Capacity Advisor floor / 증감률 보정
-- 좌석 잠금/Valkey 이벤트 수집과 리포트 반영
+- seat-lock-service 좌석 잠금 Kafka 이벤트 수집
 - Kafka pipeline health 리포트 반영
 - 예매 오픈 전/진행 중/감속 발생 시 Slack 트리거 고도화
 - DR compute 전체 cutover 리허설
@@ -614,7 +616,7 @@ ADMISSION_THROTTLE_RECOVERED
 
 비동기 처리 쪽은 SQS와 DLQ로 예매 확정 메시지를 안정적으로 처리하고, 실패 메시지는 격리 후 redrive할 수 있게 했습니다. Valkey는 대기열, access token, 좌석 lock처럼 빠르게 만료되는 상태를 담당하고, 최종 예매 데이터는 RDS에 저장하도록 책임을 분리했습니다.
 
-개인 프로젝트로는 Kafka/MSK Serverless 기반 이벤트 스트리밍을 추가했습니다. SQS는 작업 큐로 유지하고, Kafka는 ticket-service와 waiting-room-service의 이벤트를 여러 consumer가 재사용할 수 있는 이벤트 로그로 사용했습니다. 이 이벤트를 S3/Athena에 적재하고 Capacity Advisor가 실제 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 또한 `capacity.signals`로 감속/복구 이력을 기록하고, 운영자가 리포트를 직접 열지 않아도 Slack에서 추천 입장량과 판단 근거를 확인할 수 있도록 Slack report workflow를 구현했습니다.
+개인 프로젝트로는 Kafka/MSK Serverless 기반 이벤트 스트리밍을 추가했습니다. SQS는 작업 큐로 유지하고, Kafka는 ticket-service와 waiting-room-service의 이벤트를 여러 consumer가 재사용할 수 있는 이벤트 로그로 사용했습니다. 이 이벤트를 S3/Athena에 적재하고 Capacity Advisor가 실제 처리량과 DB 여유율을 기준으로 안전 입장량을 추천하도록 만들었습니다. 또한 `capacity.signals`로 감속/복구 이력을 기록하고, SQS worker backlog/DLQ와 Valkey CPU·memory·eviction·replication lag까지 리포트에 함께 보여주도록 확장했습니다. 운영자가 리포트를 직접 열지 않아도 Slack에서 추천 입장량과 판단 근거를 확인할 수 있도록 Slack report workflow도 구현했습니다.
 
 현재는 Ansible/k6 기반 부하테스트 시나리오와 결과 해석 기준까지 준비되어 있고, 부하테스트 EC2 inventory를 받으면 실제 부하에서 RDS Proxy나 Read Replica가 필요한지 지표 기반으로 판단할 예정입니다.
 ```

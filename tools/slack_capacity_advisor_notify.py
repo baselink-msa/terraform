@@ -27,12 +27,17 @@ def status_emoji(report: dict[str, Any]) -> str:
     status = report.get("status")
     pressure = report.get("dbPressureLevel")
     sqs_status = (report.get("sqsWorker") or {}).get("status")
+    valkey_status = (report.get("valkeyStatus") or {}).get("status")
     if status == "INSUFFICIENT_DATA":
         return ":warning:"
+    if valkey_status in {"EVICTIONS_DETECTED", "REPLICATION_LAG"}:
+        return ":rotating_light:"
     if sqs_status == "DLQ_DETECTED":
         return ":rotating_light:"
     if pressure in {"WARNING", "CRITICAL", "STOP"}:
         return ":rotating_light:"
+    if valkey_status in {"CPU_HIGH", "MEMORY_HIGH"}:
+        return ":large_yellow_circle:"
     if sqs_status in {"BACKLOG", "DELAYED"}:
         return ":large_yellow_circle:"
     if pressure == "CAUTION":
@@ -47,6 +52,7 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     effective_now = report.get("effectiveEnterPerMinuteNow")
     signals = report.get("capacitySignals") or {}
     sqs_worker = report.get("sqsWorker") or {}
+    valkey_status = report.get("valkeyStatus") or {}
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -143,6 +149,29 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     if sqs_worker.get("error"):
         sqs_text += f"\n조회 오류: `{sqs_worker.get('error')}`"
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*SQS/Worker 상태*\n{sqs_text}"}})
+
+    valkey_cluster_ids = valkey_status.get("cluster_ids") or []
+    valkey_replica_ids = valkey_status.get("replica_cluster_ids") or []
+    valkey_cpu = valkey_status.get("max_engine_cpu_percent")
+    valkey_memory = valkey_status.get("max_memory_usage_percent")
+    valkey_lag = valkey_status.get("max_replication_lag_seconds")
+    valkey_cpu_text = f"{valkey_cpu}%" if valkey_cpu is not None else "정보 없음"
+    valkey_memory_text = (
+        f"{valkey_memory}%" if valkey_memory is not None else "정보 없음"
+    )
+    valkey_lag_text = f"{valkey_lag}초" if valkey_lag is not None else "정보 없음"
+    valkey_text = (
+        f"상태 `{valkey_status.get('status', 'UNKNOWN')}` / "
+        f"clusters `{', '.join(valkey_cluster_ids) if valkey_cluster_ids else '정보 없음'}` / "
+        f"replicas `{', '.join(valkey_replica_ids) if valkey_replica_ids else '없음'}`\n"
+        f"Engine CPU `{valkey_cpu_text}` / "
+        f"memory `{valkey_memory_text}` / "
+        f"evictions `{_value(valkey_status.get('total_evictions'))}` / "
+        f"replication lag `{valkey_lag_text}`"
+    )
+    if valkey_status.get("error"):
+        valkey_text += f"\n조회 오류: `{valkey_status.get('error')}`"
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Valkey/좌석 잠금 계층 상태*\n{valkey_text}"}})
 
     if report_url:
         blocks.append(

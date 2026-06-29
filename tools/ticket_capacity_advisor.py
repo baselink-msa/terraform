@@ -59,6 +59,23 @@ class SqsWorkerSummary:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class ValkeyStatusSummary:
+    cluster_ids: tuple[str, ...] = ("baselink-dev-redis-001", "baselink-dev-redis-002")
+    replica_cluster_ids: tuple[str, ...] = ("baselink-dev-redis-002",)
+    status: str = "UNKNOWN"
+    max_engine_cpu_percent: float | None = None
+    max_memory_usage_percent: float | None = None
+    total_evictions: int | None = None
+    max_replication_lag_seconds: float | None = None
+    lookback_minutes: int = 15
+    cpu_threshold_percent: int = 80
+    memory_threshold_percent: int = 80
+    replication_lag_threshold_seconds: int = 5
+    eviction_threshold: int = 0
+    error: str | None = None
+
+
 def db_pressure(connection_count: int, budget: int) -> tuple[str, int]:
     if connection_count >= budget:
         return "STOP", 0
@@ -77,6 +94,7 @@ def calculate_recommendation(
     safety_factor: float = 0.8,
     capacity_signals: CapacitySignalSummary | None = None,
     sqs_worker: SqsWorkerSummary | None = None,
+    valkey_status: ValkeyStatusSummary | None = None,
 ) -> dict[str, Any]:
     pressure_level, throttle_percent = db_pressure(
         inputs.current_db_connections, inputs.db_connection_budget
@@ -110,6 +128,7 @@ def calculate_recommendation(
         },
         "capacitySignals": asdict(capacity_signals or CapacitySignalSummary()),
         "sqsWorker": asdict(sqs_worker or SqsWorkerSummary()),
+        "valkeyStatus": asdict(valkey_status or ValkeyStatusSummary()),
     }
     if insufficient:
         return {
@@ -293,6 +312,189 @@ def collect_sqs_worker_summary(
             backlog_threshold=backlog_threshold,
             oldest_age_threshold_seconds=oldest_age_threshold_seconds,
             dlq_threshold=dlq_threshold,
+            error=str(exc),
+        )
+
+
+def _cloudwatch_metric_statistics(
+    namespace: str,
+    metric_name: str,
+    dimensions: dict[str, str],
+    region: str,
+    lookback_minutes: int,
+    statistics: tuple[str, ...],
+    period: int = 60,
+) -> list[dict[str, Any]]:
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(minutes=lookback_minutes)
+    dimension_args: list[str] = []
+    for name, value in dimensions.items():
+        dimension_args.append(f"Name={name},Value={value}")
+    response = _aws_json(
+        [
+            "cloudwatch",
+            "get-metric-statistics",
+            "--namespace",
+            namespace,
+            "--metric-name",
+            metric_name,
+            "--dimensions",
+            *dimension_args,
+            "--start-time",
+            start_time.isoformat().replace("+00:00", "Z"),
+            "--end-time",
+            end_time.isoformat().replace("+00:00", "Z"),
+            "--period",
+            str(period),
+            "--statistics",
+            *statistics,
+            "--region",
+            region,
+        ]
+    )
+    return response.get("Datapoints", [])
+
+
+def _max_stat(datapoints: list[dict[str, Any]], statistic: str) -> float:
+    values = [float(point[statistic]) for point in datapoints if statistic in point]
+    return max(values) if values else 0.0
+
+
+def _sum_stat(datapoints: list[dict[str, Any]], statistic: str) -> float:
+    return sum(float(point[statistic]) for point in datapoints if statistic in point)
+
+
+def _valkey_status(
+    max_engine_cpu_percent: float,
+    max_memory_usage_percent: float,
+    total_evictions: int,
+    max_replication_lag_seconds: float,
+    cpu_threshold_percent: int,
+    memory_threshold_percent: int,
+    replication_lag_threshold_seconds: int,
+    eviction_threshold: int,
+) -> str:
+    if total_evictions > eviction_threshold:
+        return "EVICTIONS_DETECTED"
+    if max_replication_lag_seconds >= replication_lag_threshold_seconds:
+        return "REPLICATION_LAG"
+    if max_engine_cpu_percent >= cpu_threshold_percent:
+        return "CPU_HIGH"
+    if max_memory_usage_percent >= memory_threshold_percent:
+        return "MEMORY_HIGH"
+    return "HEALTHY"
+
+
+def collect_valkey_status_summary(
+    cluster_ids: tuple[str, ...],
+    replica_cluster_ids: tuple[str, ...],
+    region: str,
+    lookback_minutes: int = 15,
+    cpu_threshold_percent: int = 80,
+    memory_threshold_percent: int = 80,
+    replication_lag_threshold_seconds: int = 5,
+    eviction_threshold: int = 0,
+) -> ValkeyStatusSummary:
+    try:
+        engine_cpu_values: list[float] = []
+        memory_values: list[float] = []
+        eviction_total = 0.0
+        replication_lag_values: list[float] = []
+
+        for cluster_id in cluster_ids:
+            dimensions = {"CacheClusterId": cluster_id}
+            engine_cpu_values.append(
+                _max_stat(
+                    _cloudwatch_metric_statistics(
+                        "AWS/ElastiCache",
+                        "EngineCPUUtilization",
+                        dimensions,
+                        region,
+                        lookback_minutes,
+                        ("Maximum",),
+                    ),
+                    "Maximum",
+                )
+            )
+            memory_values.append(
+                _max_stat(
+                    _cloudwatch_metric_statistics(
+                        "AWS/ElastiCache",
+                        "DatabaseMemoryUsagePercentage",
+                        dimensions,
+                        region,
+                        lookback_minutes,
+                        ("Maximum",),
+                    ),
+                    "Maximum",
+                )
+            )
+            eviction_total += _sum_stat(
+                _cloudwatch_metric_statistics(
+                    "AWS/ElastiCache",
+                    "Evictions",
+                    dimensions,
+                    region,
+                    lookback_minutes,
+                    ("Sum",),
+                ),
+                "Sum",
+            )
+
+        for cluster_id in replica_cluster_ids:
+            replication_lag_values.append(
+                _max_stat(
+                    _cloudwatch_metric_statistics(
+                        "AWS/ElastiCache",
+                        "ReplicationLag",
+                        {"CacheClusterId": cluster_id},
+                        region,
+                        lookback_minutes,
+                        ("Maximum",),
+                    ),
+                    "Maximum",
+                )
+            )
+
+        max_engine_cpu = max(engine_cpu_values) if engine_cpu_values else 0.0
+        max_memory = max(memory_values) if memory_values else 0.0
+        total_evictions = int(eviction_total)
+        max_replication_lag = (
+            max(replication_lag_values) if replication_lag_values else 0.0
+        )
+        status = _valkey_status(
+            max_engine_cpu,
+            max_memory,
+            total_evictions,
+            max_replication_lag,
+            cpu_threshold_percent,
+            memory_threshold_percent,
+            replication_lag_threshold_seconds,
+            eviction_threshold,
+        )
+        return ValkeyStatusSummary(
+            cluster_ids=cluster_ids,
+            replica_cluster_ids=replica_cluster_ids,
+            status=status,
+            max_engine_cpu_percent=round(max_engine_cpu, 2),
+            max_memory_usage_percent=round(max_memory, 2),
+            total_evictions=total_evictions,
+            max_replication_lag_seconds=round(max_replication_lag, 2),
+            lookback_minutes=lookback_minutes,
+            cpu_threshold_percent=cpu_threshold_percent,
+            memory_threshold_percent=memory_threshold_percent,
+            replication_lag_threshold_seconds=replication_lag_threshold_seconds,
+            eviction_threshold=eviction_threshold,
+        )
+    except Exception as exc:
+        return ValkeyStatusSummary(
+            cluster_ids=cluster_ids,
+            replica_cluster_ids=replica_cluster_ids,
+            lookback_minutes=lookback_minutes,
+            cpu_threshold_percent=cpu_threshold_percent,
+            memory_threshold_percent=memory_threshold_percent,
+            replication_lag_threshold_seconds=replication_lag_threshold_seconds,
+            eviction_threshold=eviction_threshold,
             error=str(exc),
         )
 
@@ -493,10 +695,21 @@ def markdown_report(report: dict[str, Any]) -> str:
     recommendation = report.get("recommendedPolicyEnterPerMinute")
     signals = report.get("capacitySignals") or {}
     sqs_worker = report.get("sqsWorker") or {}
+    valkey_status = report.get("valkeyStatus") or {}
     sqs_oldest_age = sqs_worker.get("oldest_message_age_seconds")
     sqs_oldest_age_text = (
         f"{sqs_oldest_age}초" if sqs_oldest_age is not None else "정보 없음"
     )
+    valkey_cluster_ids = valkey_status.get("cluster_ids") or []
+    valkey_replica_ids = valkey_status.get("replica_cluster_ids") or []
+    valkey_cpu = valkey_status.get("max_engine_cpu_percent")
+    valkey_memory = valkey_status.get("max_memory_usage_percent")
+    valkey_lag = valkey_status.get("max_replication_lag_seconds")
+    valkey_cpu_text = f"{valkey_cpu}%" if valkey_cpu is not None else "정보 없음"
+    valkey_memory_text = (
+        f"{valkey_memory}%" if valkey_memory is not None else "정보 없음"
+    )
+    valkey_lag_text = f"{valkey_lag}초" if valkey_lag is not None else "정보 없음"
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -575,7 +788,33 @@ def markdown_report(report: dict[str, Any]) -> str:
             "- 해석: `DLQ_DETECTED`는 원인 확인 후 redrive가 필요하고, "
             "`BACKLOG`/`DELAYED`는 worker 처리 지연 또는 downstream 병목을 의심합니다."
         )
+    lines.extend(
+        [
+            "",
+            "## Valkey/좌석 잠금 계층 상태",
+            "",
+            f"- 상태: `{valkey_status.get('status', 'UNKNOWN')}`",
+            f"- 조회 대상: `{', '.join(valkey_cluster_ids) if valkey_cluster_ids else '정보 없음'}`",
+            f"- replica 대상: `{', '.join(valkey_replica_ids) if valkey_replica_ids else '없음'}`",
+            f"- 최대 Engine CPU: `{valkey_cpu_text}`",
+            f"- 최대 메모리 사용률: `{valkey_memory_text}`",
+            f"- Evictions 합계: `{valkey_status.get('total_evictions') if valkey_status.get('total_evictions') is not None else '정보 없음'}`",
+            f"- 최대 replication lag: `{valkey_lag_text}`",
+        ]
+    )
+    if valkey_status.get("error"):
+        lines.append(f"- Valkey 상태 조회 오류: `{valkey_status.get('error')}`")
+    else:
+        lines.append(
+            "- 해석: `EVICTIONS_DETECTED`는 좌석 lock/access token 같은 TTL key 유실 위험을, "
+            "`CPU_HIGH`/`MEMORY_HIGH`는 대기열·좌석 잠금 요청 집중을, "
+            "`REPLICATION_LAG`는 failover/replica 읽기 안정성 저하를 의심합니다."
+        )
     return "\n".join(lines) + "\n"
+
+
+def _csv_tuple(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def main() -> None:
@@ -594,9 +833,31 @@ def main() -> None:
     parser.add_argument("--sqs-oldest-age-threshold-seconds", type=int, default=300)
     parser.add_argument("--sqs-dlq-threshold", type=int, default=1)
     parser.add_argument(
+        "--valkey-cluster-ids",
+        default="baselink-dev-redis-001,baselink-dev-redis-002",
+        help="Comma-separated ElastiCache cache cluster IDs to inspect.",
+    )
+    parser.add_argument(
+        "--valkey-replica-cluster-ids",
+        default="baselink-dev-redis-002",
+        help="Comma-separated replica cache cluster IDs for ReplicationLag.",
+    )
+    parser.add_argument("--valkey-lookback-minutes", type=int, default=15)
+    parser.add_argument("--valkey-cpu-threshold-percent", type=int, default=80)
+    parser.add_argument("--valkey-memory-threshold-percent", type=int, default=80)
+    parser.add_argument(
+        "--valkey-replication-lag-threshold-seconds", type=int, default=5
+    )
+    parser.add_argument("--valkey-eviction-threshold", type=int, default=0)
+    parser.add_argument(
         "--skip-sqs-worker",
         action="store_true",
         help="Do not query SQS queue attributes for the worker status section.",
+    )
+    parser.add_argument(
+        "--skip-valkey-status",
+        action="store_true",
+        help="Do not query CloudWatch ElastiCache metrics for the Valkey status section.",
     )
     parser.add_argument(
         "--producer-filter",
@@ -615,6 +876,8 @@ def main() -> None:
     producer_filters = tuple(
         item.strip() for item in (args.producer_in or "").split(",") if item.strip()
     )
+    valkey_cluster_ids = _csv_tuple(args.valkey_cluster_ids)
+    valkey_replica_cluster_ids = _csv_tuple(args.valkey_replica_cluster_ids)
     inputs = collect_athena_inputs(
         args.game_id,
         args.lookback_days,
@@ -653,11 +916,36 @@ def main() -> None:
             args.sqs_dlq_threshold,
         )
     )
+    valkey_status = (
+        ValkeyStatusSummary(
+            cluster_ids=valkey_cluster_ids,
+            replica_cluster_ids=valkey_replica_cluster_ids,
+            lookback_minutes=args.valkey_lookback_minutes,
+            cpu_threshold_percent=args.valkey_cpu_threshold_percent,
+            memory_threshold_percent=args.valkey_memory_threshold_percent,
+            replication_lag_threshold_seconds=(
+                args.valkey_replication_lag_threshold_seconds
+            ),
+            eviction_threshold=args.valkey_eviction_threshold,
+        )
+        if args.skip_valkey_status
+        else collect_valkey_status_summary(
+            valkey_cluster_ids,
+            valkey_replica_cluster_ids,
+            args.region,
+            args.valkey_lookback_minutes,
+            args.valkey_cpu_threshold_percent,
+            args.valkey_memory_threshold_percent,
+            args.valkey_replication_lag_threshold_seconds,
+            args.valkey_eviction_threshold,
+        )
+    )
     report = calculate_recommendation(
         inputs,
         args.minimum_samples,
         capacity_signals=capacity_signals,
         sqs_worker=sqs_worker,
+        valkey_status=valkey_status,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

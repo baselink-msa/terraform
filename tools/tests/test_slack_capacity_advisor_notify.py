@@ -57,6 +57,20 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
                 "oldest_age_threshold_seconds": 300,
                 "dlq_threshold": 1,
             },
+            "valkeyStatus": {
+                "cluster_ids": ["baselink-dev-redis-001", "baselink-dev-redis-002"],
+                "replica_cluster_ids": ["baselink-dev-redis-002"],
+                "status": "HEALTHY",
+                "max_engine_cpu_percent": 12.5,
+                "max_memory_usage_percent": 34.1,
+                "total_evictions": 0,
+                "max_replication_lag_seconds": 0.0,
+                "lookback_minutes": 15,
+                "cpu_threshold_percent": 80,
+                "memory_threshold_percent": 80,
+                "replication_lag_threshold_seconds": 5,
+                "eviction_threshold": 0,
+            },
         }
         values.update(overrides)
         return values
@@ -80,6 +94,8 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         self.assertIn("18/60", text)
         self.assertIn("SQS/Worker 상태", text)
         self.assertIn("ticket-confirm-queue", text)
+        self.assertIn("Valkey/좌석 잠금 계층 상태", text)
+        self.assertIn("baselink-dev-redis-001", text)
 
     def test_payload_explains_when_no_capacity_signals_exist(self):
         report = self.report(
@@ -120,6 +136,39 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
 
         self.assertEqual(":rotating_light:", notify.status_emoji(report))
         self.assertIn("DLQ_DETECTED", text)
+
+    def test_valkey_evictions_use_incident_emoji(self):
+        report = self.report(
+            valkeyStatus={
+                "status": "EVICTIONS_DETECTED",
+                "cluster_ids": ["baselink-dev-redis-001"],
+                "replica_cluster_ids": [],
+                "max_engine_cpu_percent": 20.0,
+                "max_memory_usage_percent": 30.0,
+                "total_evictions": 1,
+                "max_replication_lag_seconds": 0.0,
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertEqual(":rotating_light:", notify.status_emoji(report))
+        self.assertIn("EVICTIONS_DETECTED", text)
+
+    def test_valkey_cpu_high_uses_warning_emoji(self):
+        report = self.report(
+            valkeyStatus={
+                "status": "CPU_HIGH",
+                "cluster_ids": ["baselink-dev-redis-001"],
+                "replica_cluster_ids": [],
+                "max_engine_cpu_percent": 81.0,
+                "max_memory_usage_percent": 30.0,
+                "total_evictions": 0,
+                "max_replication_lag_seconds": 0.0,
+            }
+        )
+
+        self.assertEqual(":large_yellow_circle:", notify.status_emoji(report))
 
 
 if __name__ == "__main__":

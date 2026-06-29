@@ -118,6 +118,8 @@ Partition key:
 - 평균 effective 입장량
 - 현재 RDS `DatabaseConnections`
 - 최근 Kafka `capacity.signals` 감속/복구 신호
+- SQS/Worker backlog, DLQ 상태
+- Valkey engine CPU, memory, eviction, replication lag 상태
 
 즉, 현재 구현은 단순히 “Kafka topic을 만들었다”가 아니라 다음 흐름까지 이어져 있다.
 
@@ -204,6 +206,7 @@ Backend event
 - 2026-06-26 기준 Kafka→S3 sink runner와 Capacity Advisor E2E 검증 완료
 - 2026-06-29 기준 `capacity.signals` 감속/복구 이벤트 publish와 Capacity Advisor 리포트 반영 완료
 - 2026-06-29 기준 Capacity Advisor Slack report workflow 구현 완료
+- 2026-06-29 기준 SQS/Worker와 Valkey/좌석 잠금 계층 상태를 Capacity Advisor 리포트와 Slack 메시지에 반영 완료
 
 생성 완료 topic:
 
@@ -285,6 +288,8 @@ dev에서는 custom consumer가 단순합니다.
 - Athena 기반 Capacity Advisor JSON/Markdown 리포트 생성 완료
 - 최근 `capacity.signals` 감속/복구 신호 섹션 추가 완료
 - GitHub Actions 기반 Capacity Advisor Slack report workflow 구현 완료
+- SQS/Worker 상태 섹션 추가 완료
+- Valkey/좌석 잠금 계층 상태 섹션 추가 완료
 - 기본 schedule은 매일 09:00 KST
 - `workflow_dispatch`로 수동 실행 가능
 - `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret이 없으면 dry-run payload만 출력하고 성공 처리
@@ -393,6 +398,15 @@ SEAT_LOCK_FAILED
 SEAT_LOCK_EXPIRED
 SEAT_UNLOCKED
 ```
+
+2026-06-29 1차 구현 상태:
+
+- Capacity Advisor가 CloudWatch `AWS/ElastiCache` metric을 조회해 Valkey 상태를 리포트에 포함합니다.
+- 조회 metric은 `EngineCPUUtilization`, `DatabaseMemoryUsagePercentage`, `Evictions`, `ReplicationLag`입니다.
+- JSON/Markdown 리포트에 `valkeyStatus` 섹션을 추가했습니다.
+- Slack report에도 `Valkey/좌석 잠금 계층 상태` 섹션을 추가했습니다.
+- `EVICTIONS_DETECTED`, `REPLICATION_LAG`는 위험 알림 emoji, `CPU_HIGH`, `MEMORY_HIGH`는 주의 알림 emoji로 표시합니다.
+- 아직 `seat-lock-service`가 Kafka로 좌석 잠금 event를 발행하는 단계는 아닙니다. 현재는 리포트 생성 시점의 Valkey 현재 상태를 조회하는 방식입니다.
 
 리포트 활용:
 

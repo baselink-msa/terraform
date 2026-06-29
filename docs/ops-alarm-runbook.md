@@ -18,9 +18,10 @@
 | 채널 | 목적 | 예시 |
 | --- | --- | --- |
 | `aws-alerts` | 장애/위험 감지용 즉시 알림 | RDS connection high, SQS DLQ, Backup copy 실패, WAF 차단 |
-| `capacity-reports` 또는 `ops-reports` | 운영 의사결정용 정기 리포트 | Capacity Advisor 안전 입장량 추천, 최근 감속/복구 신호 |
+| `capacity-reports` 또는 `ops-reports` | 운영 의사결정용 정기 리포트 | Capacity Advisor 안전 입장량 추천, 최근 감속/복구 신호, SQS/Valkey 상태 요약 |
 
 이 문서는 `aws-alerts`로 들어오는 장애/위험 알림을 중심으로 정리한다.
+Capacity Advisor Slack report는 별도 운영 리포트 성격이며, 현재 추천 입장량뿐 아니라 SQS/Worker backlog·DLQ와 Valkey CPU·memory·eviction·replication lag도 함께 보여준다.
 
 ```text
 RDS / Valkey / SQS metric
