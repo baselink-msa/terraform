@@ -815,3 +815,112 @@ Athena 검증 결과:
 - 좌석 잠금 요청, 잠금 성공, 중복 잠금 실패, 잠금 해제 이벤트가 모두 Kafka/S3/Athena 경로에서 확인되었다.
 - seat-lock 이벤트는 이제 단순 로그가 아니라 날짜와 이벤트 타입 기준으로 조회 가능한 운영 분석 데이터가 되었다.
 - 이후 Capacity Advisor 리포트에 좌석 잠금 성공률, 실패율, 해제 흐름, Valkey 상태와의 상관관계를 추가할 수 있는 기반이 마련되었다.
+
+## 2026-06-29 Capacity Advisor Slack seat-lock/infra audit 검증
+
+목적:
+
+- Capacity Advisor Slack 메시지에 좌석 잠금 이벤트 상태가 표시되는지 확인한다.
+- `infra.audit.events` 1차 기반으로 SQS worker 상태와 Kafka S3 sink 완료 이벤트가 S3/Athena event lake에 기록되는지 확인한다.
+- Capacity Advisor의 Kafka pipeline health가 audit event까지 함께 읽는지 확인한다.
+
+Slack report 수동 실행:
+
+- Workflow run: `https://github.com/baselink-msa/terraform/actions/runs/28361099309`
+- generatedAt: `2026-06-29T09:09:42.570328+00:00`
+
+Slack 메시지 주요 결과:
+
+```text
+상태: RECOMMENDED
+신뢰도: MEDIUM
+현재 정책: 40명/분
+추천 정책: 1명/분
+현재 DB 반영 입장량: 1명/분
+DB 상태: NORMAL (16/60)
+표본: 대기열 진입 21 / 입장권 21 / 예약 요청 21 / 예약 확정 21
+SQS/Worker 상태: HEALTHY
+Valkey/좌석 잠금 계층 상태: HEALTHY
+Kafka 파이프라인 상태: HEALTHY
+```
+
+좌석 잠금 이벤트 상태:
+
+```text
+상태: COMPETITION_DETECTED
+producer: seat-lock-service
+요청 2 / 성공 1 / 실패 1 / 해제 1
+성공률 50.0% / 실패율 50.0% / 해제율 100.0%
+latest SEAT_UNLOCKED at 2026-06-29T07:57:30.567262716Z / seat 900819838
+```
+
+해석:
+
+- `COMPETITION_DETECTED`는 장애가 아니라 좌석 선점 경쟁 또는 중복 잠금 시도가 관측됐다는 의미다.
+- 현재 seat-lock 표본은 E2E 검증을 위해 일부러 중복 잠금 실패를 만든 데이터이므로 실패율 50%가 표시된다.
+- Valkey metric은 `HEALTHY`이고 seat-lock event도 Athena에서 정상 조회되므로, 좌석 잠금 계층의 관측 경로가 정상이다.
+
+infra audit event 실제 적재:
+
+```powershell
+python -B tools/record_sqs_worker_audit.py `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --source-queue-name ticket-confirm-queue `
+  --dlq-name ticket-confirm-dlq `
+  --region ap-northeast-2
+```
+
+결과:
+
+```json
+{
+  "eventType": "SQS_WORKER_STATUS_RECORDED",
+  "status": "HEALTHY",
+  "visible_messages": 0,
+  "not_visible_messages": 0,
+  "dlq_visible_messages": 0
+}
+```
+
+Kafka S3 sink 완료 audit event:
+
+```powershell
+python -B tools/kafka_s3_sink.py `
+  --input-jsonl <empty-file> `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --producer-in seat-lock-service `
+  --topics reservation.lifecycle.events `
+  --emit-audit-event
+```
+
+Athena audit event 검증:
+
+| event_type | producer | count | latest |
+| --- | --- | ---: | --- |
+| `KAFKA_S3_SINK_COMPLETED` | `kafka-s3-sink` | 1 | `2026-06-29T09:11:31.944598Z` |
+| `SQS_WORKER_STATUS_RECORDED` | `sqs-worker-audit-recorder` | 1 | `2026-06-29T09:11:19.599924Z` |
+
+audit event 반영 후 Capacity Advisor 로컬 재실행 결과:
+
+```json
+{
+  "kafkaPipelineHealth": {
+    "status": "HEALTHY",
+    "total_events": 91,
+    "producer_counts": {
+      "ticket-service": 42,
+      "waiting-room-service": 42,
+      "seat-lock-service": 5,
+      "sqs-worker-audit-recorder": 1,
+      "kafka-s3-sink": 1
+    },
+    "sink_completed_events": 1
+  }
+}
+```
+
+의미:
+
+- Capacity Advisor가 단순 입장량 추천을 넘어 SQS, Valkey, Kafka, seat-lock, infra audit event까지 함께 보는 운영 리포트로 확장되었다.
+- Slack 메시지 하나로 운영자가 추천 입장량과 주변 인프라 상태를 함께 볼 수 있다.
+- 발표에서는 “운영 의사결정용 리포트”와 “장애 알림”을 분리해 설명할 수 있다.
