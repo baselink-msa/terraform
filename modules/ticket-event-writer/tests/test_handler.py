@@ -98,6 +98,31 @@ class HandlerTest(unittest.TestCase):
         )
         fake_s3.put_object.assert_not_called()
 
+    def test_accepts_seat_lock_event_type(self):
+        seat_lock_event = envelope(event_type="SEAT_LOCKED")
+        seat_lock_event["producer"] = "seat-lock-service"
+        seat_lock_event["aggregateType"] = "SEAT_LOCK"
+        seat_lock_event["aggregateId"] = "game-1:seat-123"
+        seat_lock_event["payload"] = {"gameId": 1, "seatId": 123, "status": "LOCKED"}
+
+        result = handler.lambda_handler(
+            {
+                "Records": [
+                    {"messageId": "seat-lock", "body": json.dumps(seat_lock_event)}
+                ]
+            },
+            None,
+        )
+
+        self.assertEqual({"batchItemFailures": []}, result)
+        _, kwargs = fake_s3.put_object.call_args
+        self.assertEqual(
+            "ticket-events/event_date=2026-06-22/"
+            "event_type=SEAT_LOCKED/game_id=1/"
+            "019f1234-7abc-7000-9000-123456789abc.json",
+            kwargs["Key"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
