@@ -50,29 +50,30 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | DR | 일부 검증 완료 | 도쿄 백업·네트워크 Pilot Light와 RDS 복원 검증 완료, compute 전환은 남음 |
 | Connection Pool | 검증 완료 | Spring/Python/KEDA 전체 app budget 60 적용 |
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
-| 운영 모니터링 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림 경로 정리, Capacity Advisor Slack report workflow 구현 |
+| 운영 모니터링 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림 경로 정리, Capacity Advisor Slack report workflow 구현 및 실제 Slack 전송 검증 |
 | 발표/Runbook | 진행 중 | 담당 파트 발표 outline, 운영 알림 Runbook, 인수인계 문서 최신화 중 |
-| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, seat-lock 이벤트, SQS/Worker 상태, Valkey 상태, Kafka pipeline health, Slack report까지 확장 |
+| 개인 프로젝트 | Phase 4 검증 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, seat-lock 이벤트, SQS/Worker 상태, Valkey 상태, Kafka pipeline health, Slack report까지 확장 |
 
 현재 완성도 판단:
 
 | 기준 | 완성도 | 설명 |
 | --- | ---: | --- |
 | 팀 핵심 기능 구현 | 약 90% | 데이터 저장·비동기 처리·복구·DB 보호 기능 구현 완료 |
-| 팀 운영 검증·문서 | 약 85% | 운영 알림 문서 최신화 중, 부하 테스트와 일부 실 Slack 캡처가 남음 |
-| 개인 프로젝트 MVP | 약 97% | Kafka→S3/Athena→Capacity Advisor→Slack report 흐름과 SQS/Valkey/Kafka pipeline 상태 반영 구현, 부하 데이터 기반 최종 수치가 남음 |
+| 팀 운영 검증·문서 | 약 90% | 운영 알림 문서 최신화와 Capacity Advisor 실 Slack 전송 검증 완료, 전체 부하 테스트 캡처와 리허설이 남음 |
+| 개인 프로젝트 MVP | 약 99% | 실제 dev 서비스 표본 21건 기준 Kafka→S3/Athena→Capacity Advisor 흐름과 SQS/Valkey/Kafka pipeline 상태 `HEALTHY` 검증 완료, 발표용 Slack 캡처가 남음 |
 | 발표 준비 | 약 75% | 발표 outline과 인수인계 문서 보강 중이며 캡처·아키텍처 그림·리허설 필요 |
 
 ### 2026-06-29 업데이트 요약
 
 - `aws-alerts`는 장애/위험 알림 채널로 정리했다.
 - `capacity-reports` 또는 `ops-reports`는 Capacity Advisor 운영 리포트 채널로 분리하는 방향이 적합하다.
-- Capacity Advisor Slack report workflow는 구현 완료됐고, 실제 Slack 전송은 `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 가능하다.
+- Capacity Advisor Slack report workflow는 구현 완료됐고, `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 실제 Slack 전송까지 검증했다.
 - Kafka 개인 프로젝트는 `ticket.domain.events`, `waiting.operational.events`, `capacity.signals`를 S3/Athena/Capacity Advisor와 연결하는 수준까지 확장됐다.
 - SQS/Worker 처리 상태는 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
 - Valkey/좌석 잠금 계층 상태는 CloudWatch metric 기반으로 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
 - Kafka pipeline health는 Athena event lake 기반으로 Capacity Advisor 리포트와 Slack payload에 1차 반영됐다.
 - `seat-lock-service` 좌석 잠금 이벤트는 Kafka `reservation.lifecycle.events` 발행과 Kafka→S3 sink 허용 event type 반영까지 1차 구현됐다.
+- 2026-06-29 실제 dev 서비스 표본 21건 기준 Capacity Advisor가 `RECOMMENDED`, SQS `HEALTHY`, Valkey `HEALTHY`, Kafka pipeline `HEALTHY`를 산출했다.
 - 다음 고도화 후보는 seat-lock 이벤트 dev E2E 검증과 `infra.audit.events` 기반 sink/producer 상태 이력화다.
 
 ## 4. RDS PostgreSQL

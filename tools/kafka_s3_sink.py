@@ -142,6 +142,51 @@ def put_s3_event(
         path.unlink(missing_ok=True)
 
 
+def wait_for_pod_ready(pod_name: str, namespace: str, timeout_seconds: int) -> None:
+    completed = subprocess.run(
+        [
+            "kubectl",
+            "wait",
+            f"pod/{pod_name}",
+            "-n",
+            namespace,
+            "--for=condition=Ready",
+            f"--timeout={timeout_seconds}s",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return
+
+    status = subprocess.run(
+        ["kubectl", "get", "pod", pod_name, "-n", namespace, "-o", "wide"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    describe = subprocess.run(
+        ["kubectl", "describe", "pod", pod_name, "-n", namespace],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    detail = "\n".join(
+        part.strip()
+        for part in [
+            completed.stderr,
+            completed.stdout,
+            status.stdout,
+            status.stderr,
+            describe.stdout,
+            describe.stderr,
+        ]
+        if part and part.strip()
+    )
+    raise RuntimeError(detail or f"Pod {pod_name} did not become Ready")
+
+
 def sink_lines(
     lines: Iterable[str],
     bucket: str,
@@ -231,6 +276,7 @@ done
             text=True,
             check=True,
         )
+        wait_for_pod_ready(pod_name, args.namespace, args.ready_timeout_seconds)
         logs = subprocess.run(
             [
                 "kubectl",
