@@ -26,10 +26,15 @@ def _value(value: Any, default: str = "정보 없음") -> str:
 def status_emoji(report: dict[str, Any]) -> str:
     status = report.get("status")
     pressure = report.get("dbPressureLevel")
+    sqs_status = (report.get("sqsWorker") or {}).get("status")
     if status == "INSUFFICIENT_DATA":
         return ":warning:"
+    if sqs_status == "DLQ_DETECTED":
+        return ":rotating_light:"
     if pressure in {"WARNING", "CRITICAL", "STOP"}:
         return ":rotating_light:"
+    if sqs_status in {"BACKLOG", "DELAYED"}:
+        return ":large_yellow_circle:"
     if pressure == "CAUTION":
         return ":large_yellow_circle:"
     return ":white_check_mark:"
@@ -41,6 +46,7 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     recommendation_text = recommendation if recommendation is not None else "보류"
     effective_now = report.get("effectiveEnterPerMinuteNow")
     signals = report.get("capacitySignals") or {}
+    sqs_worker = report.get("sqsWorker") or {}
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -119,6 +125,24 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
             )
 
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*최근 감속/복구 신호*\n{signal_text}"}})
+
+    sqs_status = sqs_worker.get("status", "UNKNOWN")
+    sqs_oldest_age = sqs_worker.get("oldest_message_age_seconds")
+    sqs_oldest_age_text = (
+        f"{sqs_oldest_age}초" if sqs_oldest_age is not None else "정보 없음"
+    )
+    sqs_text = (
+        f"상태 `{sqs_status}` / "
+        f"원본 큐 `{sqs_worker.get('source_queue_name', 'ticket-confirm-queue')}` "
+        f"대기 `{_value(sqs_worker.get('visible_messages'))}` "
+        f"처리중 `{_value(sqs_worker.get('not_visible_messages'))}` "
+        f"oldest `{sqs_oldest_age_text}` / "
+        f"DLQ `{sqs_worker.get('dlq_queue_name', 'ticket-confirm-dlq')}` "
+        f"대기 `{_value(sqs_worker.get('dlq_visible_messages'))}`"
+    )
+    if sqs_worker.get("error"):
+        sqs_text += f"\n조회 오류: `{sqs_worker.get('error')}`"
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*SQS/Worker 상태*\n{sqs_text}"}})
 
     if report_url:
         blocks.append(
