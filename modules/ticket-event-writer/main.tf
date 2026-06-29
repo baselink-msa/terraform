@@ -238,7 +238,14 @@ resource "aws_glue_catalog_table" "ticket_events" {
       "WAITING_ENTERED",
       "ACCESS_TOKEN_ISSUED",
       "RESERVATION_REQUESTED",
-      "RESERVATION_CONFIRMED"
+      "RESERVATION_CONFIRMED",
+      "ADMISSION_THROTTLE_APPLIED",
+      "ADMISSION_STOP_APPLIED",
+      "ADMISSION_THROTTLE_RECOVERED",
+      "SEAT_LOCK_REQUESTED",
+      "SEAT_LOCKED",
+      "SEAT_LOCK_FAILED",
+      "SEAT_UNLOCKED"
     ])
     "storage.location.template" = "s3://${aws_s3_bucket.events.id}/ticket-events/event_date=$${event_date}/event_type=$${event_type}/"
   }
