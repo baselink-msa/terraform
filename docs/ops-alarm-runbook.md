@@ -8,18 +8,30 @@
 - Valkey ElastiCache: 대기열, 좌석 선점, 짧은 TTL 캐시
 - SQS: 예매 확정 비동기 처리 큐와 DLQ
 - AWS Backup: RDS backup, cross-region copy, restore job
+- WAF: CloudFront/API ALB 보안 차단 및 비정상 요청 감지
 - SNS + Amazon Q Developer: CloudWatch Alarm을 Slack 채널로 전달
 
 ## 1. 알림 흐름
 
+운영 알림 채널은 두 성격으로 분리해서 사용한다.
+
+| 채널 | 목적 | 예시 |
+| --- | --- | --- |
+| `aws-alerts` | 장애/위험 감지용 즉시 알림 | RDS connection high, SQS DLQ, Backup copy 실패, WAF 차단 |
+| `capacity-reports` 또는 `ops-reports` | 운영 의사결정용 정기 리포트 | Capacity Advisor 안전 입장량 추천, 최근 감속/복구 신호 |
+
+이 문서는 `aws-alerts`로 들어오는 장애/위험 알림을 중심으로 정리한다.
+
 ```text
 RDS / Valkey / SQS metric
+  -> CloudWatch Alarm
+WAF metric
   -> CloudWatch Alarm
 AWS Backup job state
   -> EventBridge Rule
   -> SNS Topic: baselink-dev-ops-alerts
   -> Amazon Q Developer Slack channel configuration
-  -> 팀 Slack 알림 채널
+  -> aws-alerts
 ```
 
 Slack에는 장애 알림과 복구 알림이 모두 도착합니다.
@@ -38,7 +50,7 @@ Slack에는 장애 알림과 복구 알림이 모두 도착합니다.
 | --- | --- | --- |
 | `baselink-dev-rds-cpu-high` | CPUUtilization >= 80%, 5분 x 2회 | DB 쿼리 부하가 높거나 연결이 몰림 |
 | `baselink-dev-rds-free-storage-low` | FreeStorageSpace <= 2GiB, 5분 x 2회 | DB 디스크 여유 공간 부족 |
-| `baselink-dev-rds-connections-high` | DatabaseConnections >= 80, 5분 x 2회 | 커넥션 풀이 과도하게 열렸거나 트래픽 급증 |
+| `baselink-dev-rds-connections-high` | DatabaseConnections >= 60, 5분 x 2회 | app connection budget에 가까워짐 |
 | `baselink-dev-rds-freeable-memory-low` | FreeableMemory <= 100MiB, 5분 x 2회 | DB 메모리 압박 |
 
 ### Valkey ElastiCache
@@ -61,6 +73,8 @@ Slack에는 장애 알림과 복구 알림이 모두 도착합니다.
 | --- | --- | --- |
 | `baselink-dev-ticket-confirm-queue-backlog` | 원본 큐 visible messages >= 10, 5분 x 2회 | 워커 처리 속도가 유입량을 따라가지 못함 |
 | `baselink-dev-ticket-confirm-dlq-messages-visible` | DLQ visible messages >= 1, 1분 x 1회 | 메시지가 반복 실패 후 DLQ로 격리됨 |
+| `baselink-dev-ticket-domain-events-backlog` | 원본 큐 visible messages >= 100, 5분 x 2회 | 이벤트 분석 파이프라인 적재가 지연됨 |
+| `baselink-dev-ticket-domain-events-dlq-messages-visible` | DLQ visible messages >= 1, 1분 x 1회 | 이벤트 적재 실패 메시지가 DLQ로 격리됨 |
 
 ### AWS Backup
 
@@ -69,6 +83,31 @@ Slack에는 장애 알림과 복구 알림이 모두 도착합니다.
 | `baselink-dev-backup-job-failure` | `FAILED`, `ABORTED`, `EXPIRED` | 정기 또는 수동 백업이 복구 지점을 만들지 못함 |
 | `baselink-dev-copy-job-failure` | `FAILED` | 도쿄 리전 cross-region copy 실패 |
 | `baselink-dev-restore-job-failure` | `FAILED` | 복구 리허설 또는 실제 복원 실패 |
+
+### WAF
+
+CloudFront WAF와 API ALB WAF는 보안/비정상 트래픽 징후를 `aws-alerts`로 전달한다.
+
+| 범위 | 알림 패턴 | 조건 | 의미 |
+| --- | --- | --- | --- |
+| CloudFront WAF | `baselink-dev-cloudfront-waf-*-blocked` | BlockedRequests > 0, 5분 x 1회 | edge에서 차단된 요청 발생 |
+| CloudFront WAF | `baselink-dev-cloudfront-waf-*-counted` | CountedRequests > 0, 5분 x 1회 | count mode rule에 매칭된 요청 발생 |
+| API ALB WAF | `baselink-dev-api-alb-waf-*-blocked` | BlockedRequests > 0, 5분 x 1회 | API ALB 앞단에서 차단된 요청 발생 |
+| API ALB WAF | `baselink-dev-api-alb-waf-*-counted` | CountedRequests > 0, 5분 x 1회 | API ALB count mode rule에 매칭된 요청 발생 |
+
+주요 rule 계열:
+
+- Amazon IP reputation
+- Anonymous IP
+- Common rule
+- Known bad inputs
+- SQL injection
+- Admin protection
+- Global rate limit
+- Non-KR geo
+- Body size
+
+WAF 알림은 애플리케이션 장애가 아니라 비정상 요청이나 보안 정책 매칭일 수 있다. 알림을 받으면 같은 시간대 CloudFront/API 4xx, ALB target 5xx, 사용자 영향 여부를 함께 확인한다.
 
 ## 3. 공통 1차 대응
 
@@ -98,6 +137,8 @@ aws cloudwatch describe-alarms `
     baselink-dev-redis-002-replication-lag-high `
     baselink-dev-ticket-confirm-queue-backlog `
     baselink-dev-ticket-confirm-dlq-messages-visible `
+    baselink-dev-ticket-domain-events-backlog `
+    baselink-dev-ticket-domain-events-dlq-messages-visible `
   --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Reason:StateReason}"
 ```
 
@@ -279,7 +320,12 @@ aws cloudwatch get-metric-statistics `
 
 ### 원본 큐 적체
 
-`baselink-dev-ticket-confirm-queue-backlog` 알람은 메시지가 아직 실패하지는 않았지만 워커가 처리 속도를 따라가지 못할 때 울립니다.
+원본 큐 backlog 알람은 메시지가 아직 실패하지는 않았지만 consumer가 처리 속도를 따라가지 못할 때 울립니다.
+
+| 알림 | 대상 consumer | 의미 |
+| --- | --- | --- |
+| `baselink-dev-ticket-confirm-queue-backlog` | `ticket-worker-service` | 예매 확정 비동기 처리가 밀림 |
+| `baselink-dev-ticket-domain-events-backlog` | ticket event writer Lambda | 이벤트 S3 적재 파이프라인이 밀림 |
 
 확인:
 
@@ -322,7 +368,12 @@ kubectl get hpa -n baselink-dev
 
 ### DLQ 메시지 발생
 
-`baselink-dev-ticket-confirm-dlq-messages-visible` 알람은 메시지가 반복 처리 실패 후 DLQ로 이동했다는 뜻입니다.
+DLQ 알람은 메시지가 반복 처리 실패 후 격리됐다는 뜻입니다.
+
+| 알림 | DLQ | 의미 |
+| --- | --- | --- |
+| `baselink-dev-ticket-confirm-dlq-messages-visible` | `ticket-confirm-dlq` | 예매 확정 명령 처리 실패 메시지 격리 |
+| `baselink-dev-ticket-domain-events-dlq-messages-visible` | `ticket-domain-events-dlq` | 이벤트 적재 실패 메시지 격리 |
 
 원본 큐 적체와의 차이:
 
@@ -348,6 +399,8 @@ aws sqs get-queue-attributes `
 - 먼저 실패 원인을 확인합니다.
 - 원인이 DB schema, 권한, 애플리케이션 버그라면 수정 후 redrive합니다.
 - 자세한 redrive 절차는 `modules/sqs/README.md`의 DLQ 운영 절차를 따릅니다.
+
+`ticket-domain-events` DLQ는 Capacity Advisor와 Kafka/S3 분석 경로에도 영향을 줄 수 있다. 이 DLQ가 발생하면 단순히 메시지 재처리만 보지 말고, 해당 시간대 S3 적재 누락과 Athena 표본 부족 여부도 함께 확인한다.
 
 ## 7. 진단 스크립트와 AI 분석 템플릿
 
@@ -588,8 +641,9 @@ Remove-Item -LiteralPath $messageFile
 
 - RDS는 Multi-AZ, 자동 백업, PITR, CloudWatch Alarm으로 데이터 저장소의 가용성과 복구 가능성을 확보했습니다.
 - Valkey는 primary/replica Multi-AZ 구성과 CPU/메모리/eviction/복제 지연 알람으로 대기열과 좌석 선점 계층의 이상 징후를 감지합니다.
-- SQS는 원본 큐 backlog 알람으로 처리 지연을 조기에 감지하고, DLQ 알람과 redrive 절차로 최종 실패 메시지를 안전하게 복구할 수 있게 했습니다.
+- SQS는 `ticket-confirm-queue`와 `ticket-domain-events`의 backlog 알람으로 처리 지연을 조기에 감지하고, DLQ 알람과 redrive 절차로 최종 실패 메시지를 안전하게 복구할 수 있게 했습니다.
 - AWS Backup의 backup/copy/restore 실패는 EventBridge를 통해 기존 운영 Slack 채널로 전달합니다.
+- WAF는 CloudFront/API ALB 앞단의 차단·count 이벤트를 Slack으로 전달해 비정상 요청과 보안 정책 매칭을 빠르게 확인할 수 있게 합니다.
 - 모든 주요 알람은 SNS와 Amazon Q Developer를 통해 Slack으로 전달되어 팀이 장애와 복구 상태를 빠르게 공유할 수 있습니다.
 - 진단 스크립트와 AI 분석 템플릿을 함께 준비해, 운영자가 metric과 로그를 빠르게 수집하고 안전한 조치 후보를 판단할 수 있게 했습니다.
 

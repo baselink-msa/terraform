@@ -97,6 +97,40 @@ Partition key:
 
 이렇게 하면 특정 경기의 대기열과 예매 흐름을 시간순으로 분석하기 쉽습니다.
 
+## 5.1 현재 실제 수집/활용 중인 이벤트
+
+2026-06-29 기준으로 실제 구현·검증된 이벤트 활용 범위는 다음과 같습니다.
+
+| Topic | Event type | 현재 활용 |
+| --- | --- | --- |
+| `ticket.domain.events` | `RESERVATION_REQUESTED`, `RESERVATION_CONFIRMED` | 예매 요청/확정 처리량 분석, Capacity Advisor 표본 |
+| `waiting.operational.events` | `WAITING_ENTERED`, `ACCESS_TOKEN_ISSUED` | 대기열 유입량, 입장권 발급량, 평균 대기시간 분석 |
+| `capacity.signals` | `ADMISSION_THROTTLE_APPLIED`, `ADMISSION_STOP_APPLIED`, `ADMISSION_THROTTLE_RECOVERED` | RDS connection 압력에 따른 감속/중지/복구 이력 분석 |
+
+현재 Capacity Advisor 리포트는 아래 내용을 함께 본다.
+
+- 대기열 진입 수
+- 입장권 발급 수
+- 예매 요청 수
+- 예매 확정 수
+- 안정적인 분당 확정 처리량
+- 평균 대기 시간
+- 평균 effective 입장량
+- 현재 RDS `DatabaseConnections`
+- 최근 Kafka `capacity.signals` 감속/복구 신호
+
+즉, 현재 구현은 단순히 “Kafka topic을 만들었다”가 아니라 다음 흐름까지 이어져 있다.
+
+```text
+Backend event
+-> Kafka topic
+-> Kafka S3 sink runner
+-> S3 partitioned JSON
+-> Glue/Athena ticket_events
+-> Capacity Advisor JSON/Markdown report
+-> Slack report workflow
+```
+
 ## 6. Event Envelope
 
 기존 개인 프로젝트의 공통 envelope를 유지합니다.
@@ -166,7 +200,10 @@ Partition key:
 - 2026-06-25 기준 backend runtime `backend-config`에 Kafka 환경변수 주입 완료
 - 2026-06-25 기준 backend Pod에서 Kafka 환경변수 확인 완료
 - 2026-06-26 기준 `ticket-service` Outbox domain event dual publish 구현 및 dev 검증 완료
-- 아직 `waiting-room-service` Kafka publish와 Kafka→S3 sink는 진행하지 않음
+- 2026-06-26 기준 `waiting-room-service` 대기열 운영 이벤트 Kafka publish 구현 완료
+- 2026-06-26 기준 Kafka→S3 sink runner와 Capacity Advisor E2E 검증 완료
+- 2026-06-29 기준 `capacity.signals` 감속/복구 이벤트 publish와 Capacity Advisor 리포트 반영 완료
+- 2026-06-29 기준 Capacity Advisor Slack report workflow 구현 완료
 
 생성 완료 topic:
 
@@ -184,7 +221,7 @@ infra.audit.events
 
 - Terraform addon `backend-config`에 Kafka bootstrap broker와 topic 환경변수를 주입합니다. `2026-06-25 완료`
 - GitOps Deployment에 `backend-config` Reloader annotation을 추가해 ConfigMap 변경 시 Pod가 새 환경변수를 받게 합니다. `2026-06-25 완료`
-- waiting-room-service 이벤트를 SQS와 Kafka에 dual publish
+- waiting-room-service 이벤트를 SQS/Lambda 분석 경로와 Kafka에 함께 적재 `2026-06-26 완료`
 - ticket-service Outbox publisher도 domain event를 SQS와 Kafka에 dual publish `2026-06-26 완료`
 - Kafka publish 실패는 핵심 요청을 실패시키지 않습니다.
 
@@ -193,6 +230,7 @@ infra.audit.events
 - backend Pod에서 Kafka 환경변수 확인 `완료`
 - SQS 기존 이벤트 파이프라인 정상 `ticket-service Outbox 기준 완료`
 - Kafka topic에도 동일 envelope 적재 `ticket.domain.events 완료`
+- Kafka `waiting.operational.events`, `capacity.signals` 발행 경로 구현 `완료`
 - producer 성공/실패 metric 확인 `ticket_kafka_publish_total 확인`
 
 검증 기록:
@@ -222,6 +260,14 @@ dev에서는 custom consumer가 단순합니다.
 - Kafka event가 S3 partition으로 저장
 - Athena에서 기존 Capacity Advisor 쿼리 재사용 가능
 
+진행 상태:
+
+- dev/demo용 custom sink runner 구현 완료
+- `ticket.domain.events`, `waiting.operational.events`, `capacity.signals` topic을 S3/Athena event lake로 적재 가능
+- 기존 Lambda writer와 같은 event envelope, 같은 S3 partition layout을 사용
+- `eventId` 기반 object key를 사용해 같은 이벤트를 재처리해도 idempotent하게 덮어씀
+- sink runner는 현재 bounded dev/demo 실행 방식이며, 상시 운영 consumer나 Kafka Connect S3 Sink는 향후 선택 작업
+
 ### Phase 4: Realtime Capacity Intelligence
 
 - 최근 1분/5분 입장권 발급량
@@ -233,6 +279,147 @@ dev에서는 custom consumer가 단순합니다.
 
 - load test 중 실시간 처리량과 추천값 산출
 - 발표용 Markdown 리포트 생성
+
+진행 상태:
+
+- Athena 기반 Capacity Advisor JSON/Markdown 리포트 생성 완료
+- 최근 `capacity.signals` 감속/복구 신호 섹션 추가 완료
+- GitHub Actions 기반 Capacity Advisor Slack report workflow 구현 완료
+- 기본 schedule은 매일 09:00 KST
+- `workflow_dispatch`로 수동 실행 가능
+- `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret이 없으면 dry-run payload만 출력하고 성공 처리
+
+아직 자동화되지 않은 부분:
+
+- 예매 오픈 30분 전 자동 실행
+- 예매 진행 중 5분마다 위험 상태만 Slack 전송
+- `ADMISSION_THROTTLE_APPLIED` 발생 즉시 Slack 알림
+- SQS DLQ 발생 즉시 Capacity Advisor 맥락 리포트 전송
+
+이 네 가지는 GitHub Actions schedule만으로도 일부 구현할 수 있지만, 정확한 이벤트 기반 트리거가 필요하면 EventBridge/Lambda 또는 Kafka consumer 기반으로 확장하는 것이 더 자연스럽다.
+
+## 7.1 Capacity Advisor Slack 알림 전략
+
+Slack 채널은 목적에 따라 분리한다.
+
+| 채널 | 목적 | 예시 |
+| --- | --- | --- |
+| `aws-alerts` | 장애/위험 감지 | RDS high connection, SQS DLQ, Backup 실패, WAF 차단 |
+| `capacity-reports` 또는 `ops-reports` | 운영 의사결정 리포트 | 다음 예매 오픈 전 안전 입장량 추천, 최근 감속/복구 요약 |
+
+현재 구현:
+
+```text
+GitHub Actions schedule 또는 manual dispatch
+-> Athena 기반 Capacity Advisor 실행
+-> RDS DatabaseConnections 최근 값 조회
+-> JSON/Markdown 리포트 생성
+-> Slack webhook 전송
+```
+
+향후 추천 구조:
+
+```text
+예매 오픈 30분 전
+-> 이전 이벤트 기반 Capacity Advisor 실행
+-> capacity-reports로 추천 입장량 전송
+
+예매 진행 중 5분마다
+-> 최근 5분 이벤트와 RDS 상태 분석
+-> 위험하면 capacity-reports 또는 aws-alerts로 전송
+
+ADMISSION_THROTTLE_APPLIED 발생
+-> 즉시 aws-alerts로 위험 알림
+-> capacity-reports에는 후속 리포트 또는 요약 전송
+
+SQS DLQ 발생
+-> 즉시 aws-alerts로 장애 알림
+-> 필요 시 Capacity Advisor 리포트에 backlog/DLQ 맥락 추가
+```
+
+`CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` GitHub Repository Secret은 실제 Slack 전송을 시작하기 직전에 추가해도 된다. Secret이 없으면 workflow는 dry-run payload만 출력하므로, 문서/코드 검증과 PR merge를 먼저 끝낸 뒤 발표 캡처나 실제 운영 리포트가 필요할 때 Secret을 넣어도 된다.
+
+## 7.2 Kafka 리포트 확장 후보
+
+Capacity Advisor를 “안전 입장량 추천”에서 “예매 인프라 상태 기반 운영 리포트”로 넓히기 위해 다음 이벤트를 추가하는 것이 좋다.
+
+### 1순위: SQS/Worker 처리 상태
+
+권장 topic:
+
+```text
+infra.audit.events
+```
+
+권장 event type:
+
+```text
+SQS_BACKLOG_DETECTED
+SQS_BACKLOG_RECOVERED
+SQS_DLQ_DETECTED
+WORKER_PROCESSING_DELAYED
+WORKER_RECOVERED
+```
+
+리포트 활용:
+
+- ticket-confirm queue backlog 발생 횟수
+- DLQ 발생 여부
+- 가장 오래 기다린 메시지 age
+- worker 처리 지연 여부
+- 현재 추천 입장량을 낮춰야 하는 운영 근거
+
+### 2순위: 좌석 잠금 / Valkey 이벤트
+
+권장 topic:
+
+```text
+reservation.lifecycle.events 또는 seat-lock.events
+```
+
+권장 event type:
+
+```text
+SEAT_LOCK_REQUESTED
+SEAT_LOCKED
+SEAT_LOCK_FAILED
+SEAT_LOCK_EXPIRED
+SEAT_UNLOCKED
+```
+
+리포트 활용:
+
+- 좌석 잠금 성공률
+- 좌석 잠금 실패 수
+- lock 만료/잔류 의심 건수
+- 인기 좌석 구역 또는 hot key 후보
+- Valkey eviction/CPU 알람과의 상관관계
+
+### 3순위: Kafka 파이프라인 자체 상태
+
+권장 topic:
+
+```text
+infra.audit.events
+```
+
+권장 event type:
+
+```text
+KAFKA_PRODUCE_FAILED
+KAFKA_S3_SINK_DELAYED
+KAFKA_EVENT_SKIPPED
+KAFKA_EVENT_INVALID
+KAFKA_S3_SINK_COMPLETED
+```
+
+리포트 활용:
+
+- Kafka producer 실패 수
+- S3 sink 적재 성공/실패 수
+- invalid event 수
+- 마지막 적재 시각
+- Athena 표본 부족이 실제 트래픽 부족인지, 파이프라인 지연인지 구분
 
 ## 8. 리스크와 방어 논리
 
