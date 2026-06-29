@@ -324,7 +324,7 @@ Phase 4 검증 완료
 -> load-test-validation-plan 최신화
 -> kafka-capacity-advisor-e2e-verification 최신화
 -> 발표용 outline 최신화
--> Capacity Advisor 추천값 minimum floor / 최대 감소율 guardrail 검토
+-> Capacity Advisor 추천값 minimum floor / 최대 감소율 guardrail 구현
 -> Read Replica 판단을 위한 조회 API 부하테스트 검토
 -> RDS Proxy 판단을 위한 connection storm 부하테스트 검토
 ```
@@ -370,7 +370,7 @@ docs/my-part-presentation-outline.md
 - Slack 메시지에 추천 입장량, 판단 근거, SQS/Worker, Valkey, seat-lock, Kafka pipeline health가 표시됨
 - 이후 Webhook URL 노출 사고가 있었고 사용자가 새 Webhook으로 교체 완료
 
-### P1: Capacity Advisor 추천 산식 운영 고도화
+### 완료: Capacity Advisor 추천 산식 운영 guardrail 1차 적용
 
 배경:
 
@@ -378,12 +378,26 @@ docs/my-part-presentation-outline.md
 - 추천값이 낮은 이유는 DB 위험이 아니라 관측된 안정 예약 확정 처리량 2.0건/분에 안전계수 0.8과 `floor()`가 적용됐기 때문이다.
 - 안정성 관점에서는 보수적이지만 실제 운영 정책으로 바로 적용하기에는 너무 낮을 수 있다.
 
-권장 작업:
+적용한 개선:
 
-- minimum floor 정책 추가
-- 직전 정책 대비 최대 감소율 guardrail 추가
+- minimum floor 정책 추가: 기본 10명/분
+- 직전 정책 대비 최대 감소율 guardrail 추가: 기본 50%
+- raw 추천값과 운영 guardrail 적용값을 리포트 계산 근거에 함께 표시
+- GitHub Actions에서 `CAPACITY_ADVISOR_MINIMUM_POLICY_FLOOR`, `CAPACITY_ADVISOR_MAX_DECREASE_PERCENT` Repository Variables로 조정 가능
+
+동일 부하테스트 입력 기준 결과:
+
+```text
+v1 raw recommendation: 1.6명/분
+v1 recommended policy: 1명/분
+v2 policy floor guardrail: 20명/분
+v2 recommended policy: 20명/분
+```
+
+남은 고도화:
+
 - 예매 오픈 규모/목표 대기시간을 반영한 policy profile 추가
-- Slack 메시지에 “추천값이 낮은 이유”를 더 명확히 표시
+- `testRunId` 또는 시간 범위 필터로 실제 부하테스트 구간만 분리 분석
 
 효과:
 
@@ -1373,7 +1387,7 @@ Capacity Advisor 재계산 결과:
 | 상태 | `RECOMMENDED` |
 | 신뢰도 | `HIGH` |
 | 현재 정책 | 40명/분 |
-| 추천 정책 | 1명/분 |
+| 추천 정책 | v1 산식 기준 1명/분 |
 | DB 상태 | `NORMAL` (28/60) |
 | 대기열 진입 | 402 |
 | 입장권 발급 | 317 |
@@ -1386,7 +1400,7 @@ Capacity Advisor 재계산 결과:
 | SQS/Worker | `HEALTHY` |
 | Valkey | `HEALTHY` |
 
-추천값 1명/분의 의미:
+v1 추천값 1명/분의 의미:
 
 ```text
 stable_confirmed_per_minute = 2.0
@@ -1398,7 +1412,24 @@ raw_recommendation = 2.0 * 1.0 * 0.8 * 1.0 = 1.6
 floor(1.6) = 1
 ```
 
-즉, 추천값 1명/분은 DB가 위험하다는 뜻이 아니다. 이번 부하테스트에서 관측된 안정 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 나온 보수적인 추천값이다.
+즉, v1 추천값 1명/분은 DB가 위험하다는 뜻이 아니다. 이번 부하테스트에서 관측된 안정 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 나온 보수적인 추천값이다.
+
+Capacity Advisor v2 guardrail 적용 결과:
+
+```text
+raw recommendation: 1.6명/분
+raw policy: 1명/분
+minimum policy floor: 10명/분
+max decrease guardrail: 20명/분
+recommended policy: 20명/분
+effectiveEnterPerMinuteNow: 20명/분
+```
+
+의미:
+
+- 관측 처리량이 낮다는 사실은 숨기지 않고 raw 값으로 보여준다.
+- DB/SQS/Valkey가 정상인 상황에서는 현재 정책을 40명/분에서 1명/분으로 급격히 낮추지 않는다.
+- Capacity Advisor가 시스템 보호와 사용자 경험을 함께 고려하는 운영 판단 도구에 가까워졌다.
 
 이번 검증으로 얻은 결론:
 
@@ -1412,9 +1443,10 @@ floor(1.6) = 1
 다음 우선순위:
 
 ```text
-P0. Capacity Advisor 추천 산식 운영 고도화
-    - minimum floor
-    - 직전 정책 대비 최대 감소율 guardrail
+P0. Capacity Advisor 부하테스트 구간 분리 분석
+    - testRunId
+    - start_time/end_time
+    - smoke/순차 표본과 load 표본 분리
     - 예매 오픈 규모/목표 대기시간별 policy profile
 
 P1. Read Replica 판단용 조회 API 부하테스트

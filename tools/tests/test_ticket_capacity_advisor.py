@@ -77,6 +77,44 @@ class CapacityAdvisorTest(unittest.TestCase):
 
         self.assertEqual(50, report["recommendedPolicyEnterPerMinute"])
 
+    def test_prevents_unrealistic_drop_when_infra_is_healthy(self):
+        report = advisor.calculate_recommendation(
+            self.inputs(
+                current_policy_enter_per_minute=40,
+                waiting_entered=402,
+                access_tokens_issued=317,
+                reservation_requested=317,
+                reservation_confirmed=317,
+                stable_confirmed_per_minute=2.0,
+                average_waiting_seconds=8.31,
+                average_effective_enter_per_minute=40.0,
+                current_db_connections=28,
+            )
+        )
+
+        self.assertEqual(20, report["recommendedPolicyEnterPerMinute"])
+        self.assertEqual(20, report["effectiveEnterPerMinuteNow"])
+        self.assertEqual(1, report["calculation"]["rawPolicyEnterPerMinute"])
+        self.assertEqual(20, report["calculation"]["policyFloorGuardrail"])
+        self.assertIn("운영 하한 20명/분", "\n".join(report["reasons"]))
+
+    def test_allows_policy_floor_tuning(self):
+        report = advisor.calculate_recommendation(
+            self.inputs(
+                current_policy_enter_per_minute=40,
+                access_tokens_issued=317,
+                reservation_requested=317,
+                reservation_confirmed=317,
+                stable_confirmed_per_minute=2.0,
+                average_effective_enter_per_minute=40.0,
+            ),
+            minimum_policy_floor=10,
+            max_decrease_percent=75,
+        )
+
+        self.assertEqual(10, report["recommendedPolicyEnterPerMinute"])
+        self.assertEqual(10, report["calculation"]["policyFloorGuardrail"])
+
     def test_report_contains_multi_producer_filter(self):
         report = advisor.calculate_recommendation(
             self.inputs(producer_filters=("ticket-service", "waiting-room-service"))

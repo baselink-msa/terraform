@@ -1023,7 +1023,7 @@ producerIn: ticket-service,waiting-room-service
 | 상태 | `RECOMMENDED` |
 | 신뢰도 | `HIGH` |
 | 현재 정책 | 40명/분 |
-| 추천 정책 | 1명/분 |
+| 추천 정책 | v1 산식 기준 1명/분 |
 | DB 상태 | `NORMAL` (28/60) |
 | 대기열 진입 | 402 |
 | 입장권 발급 | 317 |
@@ -1060,7 +1060,7 @@ event type counts:
 - SEAT_UNLOCKED=1
 ```
 
-추천값 1명/분 해석:
+v1 추천값 1명/분 해석:
 
 ```text
 stable_confirmed_per_minute = 2.0
@@ -1072,7 +1072,29 @@ raw_recommendation = 2.0 * 1.0 * 0.8 * 1.0 = 1.6
 floor(1.6) = 1
 ```
 
-따라서 추천값 1명/분은 DB가 위험하다는 의미가 아니다. 현재 부하테스트에서 관측된 안정 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 나온 보수적인 값이다.
+따라서 v1 추천값 1명/분은 DB가 위험하다는 의미가 아니다. 현재 부하테스트에서 관측된 안정 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 나온 보수적인 값이다.
+
+### Capacity Advisor v2 guardrail 보정
+
+부하테스트 결과를 운영 정책으로 사용하기 위해 v2 산식에는 최소 운영 floor와 최대 감소율 guardrail을 추가했다.
+
+동일 입력값 기준 v2 결과:
+
+```text
+raw recommendation: 1.6명/분
+raw policy: 1명/분
+minimum policy floor: 10명/분
+max decrease guardrail: 20명/분
+policy floor guardrail: 20명/분
+recommended policy: 20명/분
+effectiveEnterPerMinuteNow: 20명/분
+```
+
+이 보정의 의미:
+
+- 관측 처리량이 낮다는 사실은 `rawRecommendedPolicyEnterPerMinute`로 그대로 보여준다.
+- 하지만 DB/SQS/Valkey가 정상인 상황에서 운영 정책을 40명/분에서 1명/분으로 급격히 낮추지 않는다.
+- 추천값은 안정성과 사용자 경험을 함께 고려한 운영 의사결정 값으로 바뀐다.
 
 ### 최종 판단
 
@@ -1081,4 +1103,5 @@ floor(1.6) = 1
 - RDS/SQS/Valkey/Kafka pipeline health가 함께 정상으로 표시되어 운영 리포트 역할이 강화됐다.
 - 이번 부하에서는 RDS Proxy를 즉시 도입해야 할 connection storm은 확인되지 않았다.
 - Read Replica는 조회 API 중심 부하테스트를 별도로 수행한 뒤 도입 여부를 판단하는 것이 좋다.
-- Capacity Advisor 추천값은 운영에 바로 적용하기 전 minimum floor, 최대 감소율 guardrail, 예매 오픈 규모별 정책을 추가하는 것이 좋다.
+- Capacity Advisor 추천값은 v2 guardrail로 1명/분 급락 문제를 1차 보정했다.
+- 다음 고도화는 `testRunId` 또는 시간 범위 필터로 실제 부하테스트 구간만 분리 분석하는 것이다.

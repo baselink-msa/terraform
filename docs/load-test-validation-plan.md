@@ -410,7 +410,7 @@ Capacity Advisor 결과:
 | 상태 | `RECOMMENDED` |
 | 신뢰도 | `HIGH` |
 | 현재 정책 | 40명/분 |
-| 추천 정책 | 1명/분 |
+| 추천 정책 | v1 산식 기준 1명/분 |
 | DB 상태 | `NORMAL` (28/60) |
 | 대기열 진입 | 402 |
 | 입장권 발급 | 317 |
@@ -435,9 +435,37 @@ raw_recommendation = 2.0 * 1.0 * 0.8 * 1.0 = 1.6
 recommendedPolicyEnterPerMinute = floor(1.6) = 1
 ```
 
-따라서 이번 추천값은 DB가 위험해서 1명/분을 제안한 것이 아니다. 현재 부하테스트에서 관측된 실제 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 1명/분으로 계산됐다.
+따라서 v1 추천값은 DB가 위험해서 1명/분을 제안한 것이 아니다. 현재 부하테스트에서 관측된 실제 예약 확정 처리량이 분당 2건 수준이었고, Capacity Advisor가 안전계수와 내림 처리를 적용했기 때문에 1명/분으로 계산됐다.
 
-### 9.5 최종 판단
+### 9.5 Capacity Advisor v2 guardrail 적용 결과
+
+v1 산식은 안정성 관점에서는 보수적이지만, DB/SQS/Valkey가 모두 정상인 상황에서도 현재 정책 40명/분을 1명/분으로 급격히 낮출 수 있었다. 이는 실제 티켓팅 서비스의 사용자 경험과 운영 목적에는 맞지 않는다.
+
+이를 보완하기 위해 Capacity Advisor v2에는 다음 guardrail을 추가했다.
+
+| 항목 | 기본값 | 의미 |
+| --- | ---: | --- |
+| minimum policy floor | 10명/분 | 운영상 너무 낮은 추천값 방지 |
+| max decrease percent | 50% | 현재 정책 대비 한 번에 50% 넘게 감소하지 않음 |
+| max increase guardrail | 25% | 현재 정책 대비 한 번에 25% 넘게 증가하지 않음 |
+
+동일한 부하테스트 입력값을 v2 산식에 넣으면 다음처럼 계산된다.
+
+```text
+raw recommendation = 1.6명/분
+raw policy = floor(1.6) = 1명/분
+current policy = 40명/분
+minimum policy floor = 10명/분
+max decrease guardrail = 40 * 50% = 20명/분
+policy floor guardrail = max(10, 20) = 20명/분
+
+v2 recommended policy = 20명/분
+DB 상태 NORMAL이므로 effectiveEnterPerMinuteNow = 20명/분
+```
+
+즉, v2는 관측 처리량이 낮다는 사실은 숨기지 않고 `rawRecommendedPolicyEnterPerMinute=1.6`으로 보여주되, 실제 운영 추천값은 사용자 경험을 고려해 20명/분으로 보정한다.
+
+### 9.6 최종 판단
 
 이번 검증의 결론:
 
@@ -448,7 +476,8 @@ recommendedPolicyEnterPerMinute = floor(1.6) = 1
 - RDS connection은 최대 28/60으로 여유가 있었고, RDS Proxy를 즉시 도입해야 할 connection storm은 확인되지 않았다.
 - ticket reserve/confirm p95가 130ms 안팎으로 유지되어 예매 write 경로의 DB 병목은 확인되지 않았다.
 - Read Replica 도입 여부는 아직 조회 API 중심 부하테스트 결과가 더 필요하다.
-- 추천값 1명/분은 안정성 관점에서는 보수적이지만, 실제 운영 정책으로 바로 쓰기에는 너무 낮을 수 있으므로 floor/감소율 guardrail 고도화가 필요하다.
+- v1 추천값 1명/분은 안정성 관점에서는 보수적이지만 실제 운영 정책으로 바로 쓰기에는 너무 낮았다.
+- v2에서는 minimum floor와 최대 감소율 guardrail을 적용해 동일 입력 기준 추천값을 20명/분으로 보정했다.
 
 발표용 핵심 메시지:
 
@@ -592,10 +621,10 @@ recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
 
 후속 작업:
 
-- minimum floor 정책 추가
+- v2 guardrail 적용 완료: minimum floor와 직전 정책 대비 최대 감소율
 - 표본 수와 duration 확대
 - 성공 처리량 산식 재검토
-- 직전 정책 대비 최대 감소율 적용
+- 부하테스트 구간만 분석할 수 있는 `testRunId` 또는 시간 범위 필터 추가
 
 ## 12. 이번 문서화 작업의 의미
 
@@ -610,9 +639,9 @@ recommendedPolicyEnterPerMinute가 1명/분처럼 지나치게 낮음
 
 ## 13. 다음 고도화 후보
 
-1. Capacity Advisor 최소 운영 floor와 최대 감소율 guardrail
-   - 현재 추천값은 관측 처리량에 안전계수와 `floor()`를 적용해 매우 보수적으로 내려갈 수 있다.
-   - 운영 정책으로 바로 쓰려면 예매 오픈 규모, 목표 대기시간, 최소 입장 보장값을 반영해야 한다.
+1. Capacity Advisor 부하테스트 구간 분리 분석
+   - 현재는 lookback window 내 이벤트를 함께 보므로 smoke/순차 표본과 load 표본이 섞일 수 있다.
+   - k6 `testRunId` 또는 `start_time/end_time` 필터를 추가하면 실제 부하 구간만 분리해 계산할 수 있다.
 
 2. 조회 API 중심 Read Replica 판단 부하테스트
    - `GET /api/games`, 좌석 조회, 예매 가능 좌석 조회처럼 read-heavy API p95와 RDS CPU/ReadIOPS를 별도로 확인한다.

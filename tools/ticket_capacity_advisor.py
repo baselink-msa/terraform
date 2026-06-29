@@ -136,6 +136,8 @@ def calculate_recommendation(
     inputs: CapacityInputs,
     minimum_samples: int = 20,
     safety_factor: float = 0.8,
+    minimum_policy_floor: int = 10,
+    max_decrease_percent: int = 50,
     capacity_signals: CapacitySignalSummary | None = None,
     sqs_worker: SqsWorkerSummary | None = None,
     valkey_status: ValkeyStatusSummary | None = None,
@@ -214,11 +216,23 @@ def calculate_recommendation(
             raw_recommendation, inputs.average_effective_enter_per_minute
         )
 
+    raw_policy = max(1, math.floor(raw_recommendation))
+    minimum_policy_floor = max(1, minimum_policy_floor)
+    max_decrease_percent = max(0, min(max_decrease_percent, 100))
     increase_guardrail = max(
         1, math.floor(inputs.current_policy_enter_per_minute * 1.25)
     )
-    recommended_policy = max(
-        1, min(math.floor(raw_recommendation), increase_guardrail)
+    decrease_guardrail = max(
+        1,
+        math.floor(
+            inputs.current_policy_enter_per_minute
+            * (100 - max_decrease_percent)
+            / 100
+        ),
+    )
+    policy_floor_guardrail = max(minimum_policy_floor, decrease_guardrail)
+    recommended_policy = min(
+        max(raw_policy, policy_floor_guardrail), increase_guardrail
     )
     effective_now = math.floor(recommended_policy * throttle_percent / 100)
 
@@ -228,6 +242,25 @@ def calculate_recommendation(
         inputs.reservation_confirmed,
     )
     confidence = "HIGH" if sample_floor >= 100 else "MEDIUM"
+    reasons = [
+        f"안정 구간 예약 확정 처리량은 분당 {inputs.stable_confirmed_per_minute:.2f}건입니다.",
+        f"예약 요청 대비 확정률은 {conversion * 100:.1f}%입니다.",
+        f"안전계수 {safety_factor:.2f}와 대기시간 보정 {waiting_factor:.2f}를 적용했습니다.",
+    ]
+    if raw_policy < policy_floor_guardrail:
+        reasons.append(
+            f"원시 계산값은 {raw_recommendation:.2f}명/분이지만 운영 하한 {policy_floor_guardrail}명/분을 적용했습니다."
+        )
+    else:
+        reasons.append(
+            f"원시 계산값은 {raw_recommendation:.2f}명/분이며 운영 하한 {policy_floor_guardrail}명/분 이상입니다."
+        )
+    reasons.extend(
+        [
+            f"정책 추천값은 현재 설정 대비 한 번에 25% 넘게 증가하지 않고 {max_decrease_percent}% 넘게 감소하지 않습니다.",
+            f"현재 DB 상태는 {pressure_level}이며 실시간 자동 감속은 별도로 {throttle_percent}%를 적용합니다.",
+        ]
+    )
     return {
         **base,
         "status": "RECOMMENDED",
@@ -245,15 +278,15 @@ def calculate_recommendation(
             ),
             "safetyFactor": safety_factor,
             "waitingFactor": waiting_factor,
+            "rawRecommendedPolicyEnterPerMinute": round(raw_recommendation, 2),
+            "rawPolicyEnterPerMinute": raw_policy,
+            "minimumPolicyFloor": minimum_policy_floor,
             "maximumIncreaseGuardrail": increase_guardrail,
+            "maximumDecreasePercent": max_decrease_percent,
+            "maximumDecreaseGuardrail": decrease_guardrail,
+            "policyFloorGuardrail": policy_floor_guardrail,
         },
-        "reasons": [
-            f"안정 구간 예약 확정 처리량은 분당 {inputs.stable_confirmed_per_minute:.2f}건입니다.",
-            f"예약 요청 대비 확정률은 {conversion * 100:.1f}%입니다.",
-            f"안전계수 {safety_factor:.2f}와 대기시간 보정 {waiting_factor:.2f}를 적용했습니다.",
-            "정책 추천값은 현재 설정 대비 한 번에 25% 넘게 증가하지 않습니다.",
-            f"현재 DB 상태는 {pressure_level}이며 실시간 자동 감속은 별도로 {throttle_percent}%를 적용합니다.",
-        ],
+        "reasons": reasons,
     }
 
 
@@ -1297,6 +1330,18 @@ def main() -> None:
     parser.add_argument("--current-db-connections", type=int, required=True)
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--minimum-samples", type=int, default=20)
+    parser.add_argument(
+        "--minimum-policy-floor",
+        type=int,
+        default=10,
+        help="Minimum base admission policy to recommend before real-time DB throttling.",
+    )
+    parser.add_argument(
+        "--max-decrease-percent",
+        type=int,
+        default=50,
+        help="Maximum percent the recommended base policy may decrease at once.",
+    )
     parser.add_argument("--database", default="baselink_dev_ticket_events")
     parser.add_argument("--workgroup", default="baselink-dev-ticket-events")
     parser.add_argument("--region", default="ap-northeast-2")
@@ -1491,6 +1536,8 @@ def main() -> None:
     report = calculate_recommendation(
         inputs,
         args.minimum_samples,
+        minimum_policy_floor=args.minimum_policy_floor,
+        max_decrease_percent=args.max_decrease_percent,
         capacity_signals=capacity_signals,
         sqs_worker=sqs_worker,
         valkey_status=valkey_status,

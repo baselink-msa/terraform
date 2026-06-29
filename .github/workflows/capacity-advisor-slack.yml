@@ -86,6 +86,8 @@ jobs:
           echo "CURRENT_POLICY=${{ inputs.current_policy || vars.CAPACITY_ADVISOR_CURRENT_POLICY || '40' }}" >> "$GITHUB_ENV"
           echo "LOOKBACK_DAYS=${{ inputs.lookback_days || vars.CAPACITY_ADVISOR_LOOKBACK_DAYS || '1' }}" >> "$GITHUB_ENV"
           echo "MINIMUM_SAMPLES=${{ inputs.minimum_samples || vars.CAPACITY_ADVISOR_MINIMUM_SAMPLES || '20' }}" >> "$GITHUB_ENV"
+          echo "MINIMUM_POLICY_FLOOR=${{ vars.CAPACITY_ADVISOR_MINIMUM_POLICY_FLOOR || '10' }}" >> "$GITHUB_ENV"
+          echo "MAX_DECREASE_PERCENT=${{ vars.CAPACITY_ADVISOR_MAX_DECREASE_PERCENT || '50' }}" >> "$GITHUB_ENV"
           echo "PRODUCER_IN=${{ inputs.producer_in || vars.CAPACITY_ADVISOR_PRODUCER_IN || 'ticket-service,waiting-room-service' }}" >> "$GITHUB_ENV"
           echo "DB_INSTANCE_ID=${{ inputs.db_instance_id || vars.CAPACITY_ADVISOR_DB_INSTANCE_ID || 'baselink-dev-postgres' }}" >> "$GITHUB_ENV"
           echo "DB_CONNECTIONS_OVERRIDE=${{ inputs.current_db_connections || '' }}" >> "$GITHUB_ENV"
@@ -149,6 +151,8 @@ jobs:
             --current-db-connections "${CURRENT_DB_CONNECTIONS}" \
             --lookback-days "${LOOKBACK_DAYS}" \
             --minimum-samples "${MINIMUM_SAMPLES}" \
+            --minimum-policy-floor "${MINIMUM_POLICY_FLOOR}" \
+            --max-decrease-percent "${MAX_DECREASE_PERCENT}" \
             --producer-in "${PRODUCER_IN}" \
             --sqs-source-queue-name "${SQS_SOURCE_QUEUE_NAME}" \
             --sqs-dlq-name "${SQS_DLQ_NAME}" \
