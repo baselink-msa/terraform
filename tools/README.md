@@ -82,6 +82,7 @@ Slack 메시지에는 다음 정보가 포함됩니다.
 - Kafka `capacity.signals` 기반 최근 감속/복구 신호
 - SQS `ticket-confirm-queue` / `ticket-confirm-dlq` 기반 worker 처리 상태
 - CloudWatch `AWS/ElastiCache` 기반 Valkey/좌석 잠금 계층 상태
+- Athena event lake 기반 좌석 잠금 이벤트 상태
 - Athena event lake 기반 Kafka pipeline health
 
 GitHub Actions 자동 알림:
@@ -123,6 +124,8 @@ CAPACITY_ADVISOR_VALKEY_EVICTION_THRESHOLD=0
 CAPACITY_ADVISOR_KAFKA_EXPECTED_PRODUCERS=ticket-service,waiting-room-service
 CAPACITY_ADVISOR_KAFKA_EXPECTED_EVENT_TYPES=WAITING_ENTERED,ACCESS_TOKEN_ISSUED,RESERVATION_REQUESTED,RESERVATION_CONFIRMED
 CAPACITY_ADVISOR_KAFKA_STALE_AFTER_HOURS=24
+CAPACITY_ADVISOR_SEAT_LOCK_PRODUCER=seat-lock-service
+CAPACITY_ADVISOR_SEAT_LOCK_FAILURE_RATE_THRESHOLD_PERCENT=60
 ```
 
 SQS status troubleshooting:
@@ -190,6 +193,80 @@ Kafka pipeline health는 Athena `ticket_events` event lake를 조회해 Kafka→
 | `PARTIAL` | 특정 producer 또는 핵심 event type이 누락됨 |
 | `PRODUCER_FAILURE` | `KAFKA_PRODUCE_FAILED` audit event가 감지됨 |
 | `INVALID_EVENTS` | `KAFKA_EVENT_INVALID` audit event가 감지됨 |
+
+## Seat-lock event summary
+
+Capacity Advisor는 Athena `ticket_events`에서 `seat-lock-service`가 발행한 좌석 잠금 이벤트를 조회해 리포트와 Slack 메시지에 함께 표시합니다.
+
+포함 항목:
+
+- `SEAT_LOCK_REQUESTED`
+- `SEAT_LOCKED`
+- `SEAT_LOCK_FAILED`
+- `SEAT_UNLOCKED`
+
+리포트에는 잠금 요청 수, 성공 수, 실패 수, 해제 수, 성공률, 실패율, 해제율, 최신 이벤트가 표시됩니다.
+
+상태 의미:
+
+| 상태 | 의미 |
+| --- | --- |
+| `HEALTHY` | 조회 기간에 좌석 잠금 실패가 없거나 실패율이 기준 이하 |
+| `COMPETITION_DETECTED` | 중복 잠금 시도 등 좌석 선점 경쟁이 관측됨 |
+| `FAILURE_RATE_HIGH` | 실패율이 기준을 초과해 좌석 잠금 병목 또는 오류 가능성 있음 |
+| `NO_EVENTS` | 조회 기간에 seat-lock 이벤트가 없음 |
+
+기본 실패율 기준은 60%입니다.
+
+```powershell
+python tools/ticket_capacity_advisor.py `
+  --game-id 9001 `
+  --current-policy 40 `
+  --current-db-connections 20 `
+  --lookback-days 1 `
+  --producer-in ticket-service,waiting-room-service `
+  --seat-lock-producer seat-lock-service `
+  --seat-lock-failure-rate-threshold-percent 60
+```
+
+## Infra audit events
+
+Kafka/SQS 파이프라인의 실행 이력도 같은 S3/Athena event lake에 남길 수 있습니다.
+
+지원 event type:
+
+- `KAFKA_PRODUCE_FAILED`
+- `KAFKA_S3_SINK_DELAYED`
+- `KAFKA_EVENT_SKIPPED`
+- `KAFKA_EVENT_INVALID`
+- `KAFKA_S3_SINK_COMPLETED`
+- `SQS_WORKER_STATUS_RECORDED`
+- `SQS_BACKLOG_DETECTED`
+- `SQS_DLQ_DETECTED`
+
+Kafka S3 sink 실행 완료 이벤트를 남기려면 `--emit-audit-event`를 추가합니다.
+
+```powershell
+python tools/kafka_s3_sink.py `
+  --consume `
+  --bootstrap-server <bootstrap-server> `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --topics ticket.domain.events waiting.operational.events reservation.lifecycle.events capacity.signals `
+  --producer-in ticket-service,waiting-room-service,seat-lock-service `
+  --emit-audit-event
+```
+
+SQS worker 상태를 audit event로 남기려면 다음 도구를 사용합니다.
+
+```powershell
+python tools/record_sqs_worker_audit.py `
+  --bucket baselink-dev-ticket-events-740831361032 `
+  --source-queue-name ticket-confirm-queue `
+  --dlq-name ticket-confirm-dlq `
+  --region ap-northeast-2
+```
+
+이 단계는 상시 Kafka producer/consumer가 아니라 dev/발표 검증용 기록 도구입니다. 운영 상시화가 필요해지면 `infra.audit.events` topic으로 producer를 붙이고, 기존 Kafka S3 sink 또는 전용 consumer가 같은 event lake에 적재하도록 확장합니다.
 | `UNKNOWN` | Kafka pipeline health 조회 실패 또는 생략 |
 
 로컬에서 Kafka pipeline health 조회를 생략하려면 다음 옵션을 추가합니다.

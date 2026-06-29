@@ -245,7 +245,15 @@ resource "aws_glue_catalog_table" "ticket_events" {
       "SEAT_LOCK_REQUESTED",
       "SEAT_LOCKED",
       "SEAT_LOCK_FAILED",
-      "SEAT_UNLOCKED"
+      "SEAT_UNLOCKED",
+      "KAFKA_PRODUCE_FAILED",
+      "KAFKA_S3_SINK_DELAYED",
+      "KAFKA_EVENT_SKIPPED",
+      "KAFKA_EVENT_INVALID",
+      "KAFKA_S3_SINK_COMPLETED",
+      "SQS_WORKER_STATUS_RECORDED",
+      "SQS_BACKLOG_DETECTED",
+      "SQS_DLQ_DETECTED"
     ])
     "storage.location.template" = "s3://${aws_s3_bucket.events.id}/ticket-events/event_date=$${event_date}/event_type=$${event_type}/"
   }
@@ -321,7 +329,7 @@ resource "aws_glue_catalog_table" "ticket_events" {
 
     columns {
       name = "payload"
-      type = "struct<initialRank:bigint,policyMaxEnterPerMinute:bigint,waitingSeconds:double,effectiveEnterPerMinute:bigint,dbPressureLevel:string,dbThrottlePercent:double,reservationId:bigint,seatId:bigint,status:string,pendingDurationSeconds:double,reason:string,currentDbConnections:bigint,dbConnectionBudget:bigint,currentReadyPodCount:bigint,projectedReadyPodCount:bigint,baseEnterPerMinute:bigint,projectedEnterPerMinute:bigint,currentMinuteRemainingSlots:bigint,canEnter:boolean>"
+      type = "struct<initialRank:bigint,policyMaxEnterPerMinute:bigint,waitingSeconds:double,effectiveEnterPerMinute:bigint,dbPressureLevel:string,dbThrottlePercent:double,reservationId:bigint,seatId:bigint,status:string,pendingDurationSeconds:double,reason:string,currentDbConnections:bigint,dbConnectionBudget:bigint,currentReadyPodCount:bigint,projectedReadyPodCount:bigint,baseEnterPerMinute:bigint,projectedEnterPerMinute:bigint,currentMinuteRemainingSlots:bigint,canEnter:boolean,accepted:bigint,written:bigint,skipped:bigint,invalid:bigint,durationSeconds:double,dryRun:boolean,topics:string,sourceQueueName:string,dlqQueueName:string,visibleMessages:bigint,notVisibleMessages:bigint,oldestMessageAgeSeconds:bigint,dlqVisibleMessages:bigint,dlqOldestMessageAgeSeconds:bigint>"
     }
   }
 }

@@ -29,12 +29,19 @@ def _format_counts(counts: dict[str, int]) -> str:
     return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
 
 
+def _percent_value(value: Any) -> str:
+    if value is None or value == "":
+        return "정보 없음"
+    return f"{value}%"
+
+
 def status_emoji(report: dict[str, Any]) -> str:
     status = report.get("status")
     pressure = report.get("dbPressureLevel")
     sqs_status = (report.get("sqsWorker") or {}).get("status")
     valkey_status = (report.get("valkeyStatus") or {}).get("status")
     kafka_status = (report.get("kafkaPipelineHealth") or {}).get("status")
+    seat_lock_status = (report.get("seatLock") or {}).get("status")
     if status == "INSUFFICIENT_DATA":
         return ":warning:"
     if kafka_status == "PRODUCER_FAILURE":
@@ -45,6 +52,8 @@ def status_emoji(report: dict[str, Any]) -> str:
         return ":rotating_light:"
     if pressure in {"WARNING", "CRITICAL", "STOP"}:
         return ":rotating_light:"
+    if seat_lock_status == "FAILURE_RATE_HIGH":
+        return ":large_yellow_circle:"
     if kafka_status in {"NO_EVENTS", "STALE", "PARTIAL", "INVALID_EVENTS"}:
         return ":large_yellow_circle:"
     if valkey_status in {"CPU_HIGH", "MEMORY_HIGH"}:
@@ -65,6 +74,7 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     sqs_worker = report.get("sqsWorker") or {}
     valkey_status = report.get("valkeyStatus") or {}
     kafka_health = report.get("kafkaPipelineHealth") or {}
+    seat_lock = report.get("seatLock") or {}
     signal_total = (
         int(signals.get("throttle_applied") or 0)
         + int(signals.get("stop_applied") or 0)
@@ -217,6 +227,25 @@ def build_slack_payload(report: dict[str, Any], report_url: str | None = None) -
     if valkey_status.get("error"):
         valkey_text += f"\n조회 오류: `{valkey_status.get('error')}`"
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Valkey/좌석 잠금 계층 상태*\n{valkey_text}"}})
+
+    seat_lock_text = (
+        f"상태 `{seat_lock.get('status', 'UNKNOWN')}` / "
+        f"producer `{seat_lock.get('producer', 'seat-lock-service')}`\n"
+        f"요청 `{seat_lock.get('requested', 0)}` "
+        f"성공 `{seat_lock.get('locked', 0)}` "
+        f"실패 `{seat_lock.get('failed', 0)}` "
+        f"해제 `{seat_lock.get('unlocked', 0)}`\n"
+        f"성공률 `{_percent_value(seat_lock.get('success_rate_percent'))}` / "
+        f"실패율 `{_percent_value(seat_lock.get('failure_rate_percent'))}` / "
+        f"해제율 `{_percent_value(seat_lock.get('unlock_rate_percent'))}`\n"
+        f"latest `{_value(seat_lock.get('latest_event_type'))}` "
+        f"at `{_value(seat_lock.get('latest_occurred_at'))}`"
+    )
+    if seat_lock.get("latest_seat_id") is not None:
+        seat_lock_text += f" / seat `{seat_lock.get('latest_seat_id')}`"
+    if seat_lock.get("error"):
+        seat_lock_text += f"\n조회 오류: `{seat_lock.get('error')}`"
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*좌석 잠금 이벤트 상태*\n{seat_lock_text}"}})
 
     kafka_missing_producers = kafka_health.get("missing_producers") or []
     kafka_missing_event_types = kafka_health.get("missing_event_types") or []

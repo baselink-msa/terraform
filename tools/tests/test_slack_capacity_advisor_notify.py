@@ -110,6 +110,21 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
                 "sink_completed_events": 1,
                 "stale_after_hours": 24,
             },
+            "seatLock": {
+                "producer": "seat-lock-service",
+                "status": "COMPETITION_DETECTED",
+                "requested": 2,
+                "locked": 1,
+                "failed": 1,
+                "unlocked": 1,
+                "success_rate_percent": 50.0,
+                "failure_rate_percent": 50.0,
+                "unlock_rate_percent": 100.0,
+                "latest_event_type": "SEAT_UNLOCKED",
+                "latest_occurred_at": "2026-06-29T07:57:30Z",
+                "latest_seat_id": 123,
+                "failure_rate_threshold_percent": 60,
+            },
         }
         values.update(overrides)
         return values
@@ -141,6 +156,9 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         self.assertIn("baselink-dev-redis-001", text)
         self.assertIn("Kafka 파이프라인 상태", text)
         self.assertIn("ticket-service=12", text)
+        self.assertIn("좌석 잠금 이벤트 상태", text)
+        self.assertIn("SEAT_UNLOCKED", text)
+        self.assertIn("실패율 `50.0%`", text)
 
     def test_payload_explains_when_no_capacity_signals_exist(self):
         report = self.report(
@@ -259,6 +277,23 @@ class SlackCapacityAdvisorNotifyTest(unittest.TestCase):
         self.assertEqual(":large_yellow_circle:", notify.status_emoji(report))
         self.assertIn("waiting-room-service", text)
         self.assertIn("ACCESS_TOKEN_ISSUED", text)
+
+    def test_seat_lock_failure_rate_high_uses_warning_emoji(self):
+        report = self.report(
+            seatLock={
+                "status": "FAILURE_RATE_HIGH",
+                "requested": 10,
+                "locked": 3,
+                "failed": 7,
+                "unlocked": 2,
+                "failure_rate_percent": 70.0,
+            }
+        )
+
+        text = self.payload_text(report)
+
+        self.assertEqual(":large_yellow_circle:", notify.status_emoji(report))
+        self.assertIn("FAILURE_RATE_HIGH", text)
 
 
 if __name__ == "__main__":
