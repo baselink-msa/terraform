@@ -37,7 +37,7 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | 배포 | 실제 AWS/EKS 환경에 반영 |
 | 검증 완료 | 정상·장애 경로 또는 복구 절차까지 확인 |
 
-마지막 점검일: `2026-06-22`
+마지막 점검일: `2026-06-29`
 
 ## 3. 전체 상태 요약
 
@@ -50,18 +50,26 @@ RDS, SQS, Valkey, 백업/복구, DR, DB connection 관리, 대기열 admission c
 | DR | 일부 검증 완료 | 도쿄 백업·네트워크 Pilot Light와 RDS 복원 검증 완료, compute 전환은 남음 |
 | Connection Pool | 검증 완료 | Spring/Python/KEDA 전체 app budget 60 적용 |
 | 동적 대기열 | 검증 완료 | Ready Pod 용량과 RDS 압력을 반영한 자동 감속 |
-| 운영 모니터링 | 일부 검증 완료 | CloudWatch·Backup EventBridge→SNS→Amazon Q→Slack 전달 확인, Python pool 전용 알림은 담당자 작업 중 |
-| 발표/Runbook | 진행 중 | 구현 상태 동기화 완료, 감속 전용 Runbook과 최종 증거 캡처 필요 |
-| 개인 프로젝트 | MVP 검증 완료 | Outbox→SQS→Lambda→S3→Athena→Capacity Advisor E2E 및 실패 경로 검증 |
+| 운영 모니터링 | 일부 검증 완료 | `aws-alerts` 장애/위험 알림 경로 정리, Capacity Advisor Slack report workflow 구현 |
+| 발표/Runbook | 진행 중 | 담당 파트 발표 outline, 운영 알림 Runbook, 인수인계 문서 최신화 중 |
+| 개인 프로젝트 | Phase 4 일부 완료 | Outbox/SQS/S3/Athena 기반에서 MSK/Kafka 이벤트 스트리밍, `capacity.signals`, Slack report까지 확장 |
 
 현재 완성도 판단:
 
 | 기준 | 완성도 | 설명 |
 | --- | ---: | --- |
 | 팀 핵심 기능 구현 | 약 90% | 데이터 저장·비동기 처리·복구·DB 보호 기능 구현 완료 |
-| 팀 운영 검증·문서 | 약 80% | 부하 테스트, 일부 Slack 알림, 감속 Runbook이 남음 |
-| 개인 프로젝트 MVP | 약 90% | 기능과 E2E 완료, 실제 부하 데이터 기반 최종 수치가 남음 |
-| 발표 준비 | 약 65% | 문서 동기화 중이며 캡처·아키텍처 그림·리허설 필요 |
+| 팀 운영 검증·문서 | 약 85% | 운영 알림 문서 최신화 중, 부하 테스트와 일부 실 Slack 캡처가 남음 |
+| 개인 프로젝트 MVP | 약 95% | Kafka→S3/Athena→Capacity Advisor→Slack report 흐름 구현, 부하 데이터 기반 최종 수치가 남음 |
+| 발표 준비 | 약 75% | 발표 outline과 인수인계 문서 보강 중이며 캡처·아키텍처 그림·리허설 필요 |
+
+### 2026-06-29 업데이트 요약
+
+- `aws-alerts`는 장애/위험 알림 채널로 정리했다.
+- `capacity-reports` 또는 `ops-reports`는 Capacity Advisor 운영 리포트 채널로 분리하는 방향이 적합하다.
+- Capacity Advisor Slack report workflow는 구현 완료됐고, 실제 Slack 전송은 `CAPACITY_ADVISOR_SLACK_WEBHOOK_URL` Secret 추가 후 가능하다.
+- Kafka 개인 프로젝트는 `ticket.domain.events`, `waiting.operational.events`, `capacity.signals`를 S3/Athena/Capacity Advisor와 연결하는 수준까지 확장됐다.
+- 다음 고도화 후보는 SQS/Worker 처리 상태, 좌석 잠금/Valkey 이벤트, Kafka pipeline health를 리포트에 추가하는 것이다.
 
 ## 4. RDS PostgreSQL
 
