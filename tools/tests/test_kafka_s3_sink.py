@@ -44,6 +44,32 @@ class KafkaS3SinkTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sink.parse_event(json.dumps(self.event(eventType="UNSUPPORTED")))
 
+    def test_accepts_capacity_signal_event_type(self):
+        event, occurred_at = sink.parse_event(
+            json.dumps(
+                self.event(
+                    eventType="ADMISSION_THROTTLE_APPLIED",
+                    producer="waiting-room-service",
+                    aggregateType="CAPACITY_SIGNAL",
+                    aggregateId="game-9001",
+                    gameId=9001,
+                    payload={
+                        "reason": "RDS_CONNECTION_PRESSURE",
+                        "dbPressureLevel": "CAUTION",
+                        "currentDbConnections": 43,
+                        "dbConnectionBudget": 60,
+                        "dbThrottlePercent": 75,
+                        "effectiveEnterPerMinute": 30,
+                    },
+                )
+            )
+        )
+
+        key = sink.object_key(event, occurred_at, "ticket-events")
+
+        self.assertIn("event_type=ADMISSION_THROTTLE_APPLIED", key)
+        self.assertIn("game_id=9001", key)
+
     def test_dry_run_skips_non_selected_producer(self):
         lines = [
             json.dumps(self.event(producer="ticket-service")),
