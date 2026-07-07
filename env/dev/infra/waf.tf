@@ -26,7 +26,7 @@ resource "aws_wafv2_web_acl" "cloudfront" {
   provider = aws.use1
 
   name        = local.cloudfront_waf_name
-  description = "WAF web ACL for the Baselink dev CloudFront distribution. Protects frontend and API traffic at the edge."
+  description = "WAF web ACL for the Baselink dev CloudFront distribution. All rules enforce block mode."
   scope       = "CLOUDFRONT"
 
   default_action {
@@ -233,7 +233,7 @@ resource "aws_wafv2_web_acl" "cloudfront" {
 
 resource "aws_wafv2_web_acl" "api_alb" {
   name        = local.api_alb_waf_name
-  description = "Regional WAF web ACL for the Baselink dev API ALB. Provides an additional protection layer for backend API traffic."
+  description = "Regional WAF web ACL for the Baselink dev API ALB. All rules enforce block mode."
   scope       = "REGIONAL"
 
   default_action {
