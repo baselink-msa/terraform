@@ -385,3 +385,4 @@ resource "kubectl_manifest" "baselink_application" {
     kubectl_manifest.postgres_keda_secret
   ]
 }
+
