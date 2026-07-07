@@ -232,6 +232,100 @@ def classify_severity(event_name: str, request_params: dict) -> str:
 
 # ─── AWS Config 조회 ─────────────────────────────────────────────────────────────
 
+def _first_present(*values):
+    for value in values:
+        if value:
+            return value
+    return None
+
+
+def extract_config_resource(event_detail: dict) -> tuple[str, str] | tuple[None, None]:
+    """CloudTrail 이벤트에서 AWS Config 조회용 resourceType/resourceId를 추출한다."""
+    event_source = event_detail.get("eventSource", "")
+    event_name = event_detail.get("eventName", "")
+    params = event_detail.get("requestParameters", {}) or {}
+
+    if event_source == "ec2.amazonaws.com":
+        if "SecurityGroup" in event_name:
+            group_id = _first_present(
+                params.get("groupId"),
+                params.get("GroupId"),
+                params.get("sourceSecurityGroupId"),
+            )
+            if not group_id:
+                group_name = params.get("groupName") or params.get("GroupName")
+                group_id = group_name
+            if group_id:
+                return "AWS::EC2::SecurityGroup", group_id
+
+        if "RouteTable" in event_name or event_name in ("CreateRoute", "DeleteRoute", "ReplaceRoute"):
+            route_table_id = params.get("routeTableId") or params.get("RouteTableId")
+            if route_table_id:
+                return "AWS::EC2::RouteTable", route_table_id
+
+        if "Subnet" in event_name:
+            subnet_id = params.get("subnetId") or params.get("SubnetId")
+            if subnet_id:
+                return "AWS::EC2::Subnet", subnet_id
+
+        if "Vpc" in event_name or "VPC" in event_name:
+            vpc_id = params.get("vpcId") or params.get("VpcId")
+            if vpc_id:
+                return "AWS::EC2::VPC", vpc_id
+
+        instance_id = params.get("instanceId")
+        if not instance_id:
+            instances_set = params.get("instancesSet", {}).get("items", [])
+            if instances_set:
+                instance_id = instances_set[0].get("instanceId")
+        if instance_id:
+            return "AWS::EC2::Instance", instance_id
+
+    if event_source == "s3.amazonaws.com":
+        bucket_name = params.get("bucketName") or params.get("bucket")
+        if bucket_name:
+            return "AWS::S3::Bucket", bucket_name
+
+    if event_source == "iam.amazonaws.com":
+        role_name = params.get("roleName")
+        if role_name:
+            return "AWS::IAM::Role", role_name
+        policy_arn = params.get("policyArn")
+        if policy_arn:
+            return "AWS::IAM::Policy", policy_arn
+        user_name = params.get("userName")
+        if user_name:
+            return "AWS::IAM::User", user_name
+
+    if event_source == "rds.amazonaws.com":
+        db_id = _first_present(
+            params.get("dBInstanceIdentifier"),
+            params.get("dbInstanceIdentifier"),
+            params.get("DBInstanceIdentifier"),
+        )
+        if db_id:
+            return "AWS::RDS::DBInstance", db_id
+
+    if event_source == "elasticache.amazonaws.com":
+        cluster_id = params.get("cacheClusterId") or params.get("replicationGroupId")
+        if cluster_id:
+            return "AWS::ElastiCache::CacheCluster", cluster_id
+
+    if event_source == "eks.amazonaws.com":
+        cluster_name = params.get("name") or params.get("clusterName")
+        if cluster_name:
+            return "AWS::EKS::Cluster", cluster_name
+
+    for resource in event_detail.get("resources", []) or []:
+        resource_type = resource.get("type")
+        resource_id = resource.get("resourceName")
+        if not resource_id and resource.get("ARN"):
+            resource_id = resource["ARN"].split("/")[-1]
+        if resource_type and resource_id:
+            return resource_type, resource_id
+
+    return None, None
+
 def get_config_diff(resource_type: str, resource_id: str) -> dict | None:
     """AWS Config에서 리소스의 최근 변경 이력을 조회한다."""
     try:
@@ -547,14 +641,12 @@ def lambda_handler(event, context):
 
             # 2. AWS Config 변경 이력 조회 (리소스 정보가 있는 경우)
             config_diff = None
-            resources = event_detail.get("resources", [])
-            if resources:
-                for resource in resources:
-                    resource_type = resource.get("type", "")
-                    resource_id = resource.get("ARN", "").split("/")[-1] if resource.get("ARN") else ""
-                    if resource_type and resource_id:
-                        config_diff = get_config_diff(resource_type, resource_id)
-                        break
+            resource_type, resource_id = extract_config_resource(event_detail)
+            if resource_type and resource_id:
+                logger.info(f"Looking up AWS Config history: {resource_type} / {resource_id}")
+                config_diff = get_config_diff(resource_type, resource_id)
+            else:
+                logger.info(f"No AWS Config resource mapping found for event: {event_name}")
 
             # 3. AI 요약
             analysis = ai_analyze(event_detail, actor_type, config_diff)

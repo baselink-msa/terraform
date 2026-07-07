@@ -88,6 +88,119 @@ resource "aws_cloudtrail" "management" {
 }
 
 # ────────────────────────────────────────────────────────────────────
+# AWS Config — 리소스 설정 변경 이력 기록
+# ────────────────────────────────────────────────────────────────────
+
+resource "aws_s3_bucket" "config" {
+  bucket        = "${local.name_prefix}-config-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+  tags          = local.common_tags
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "config" {
+  bucket = aws_s3_bucket.config.id
+
+  rule {
+    id     = "expire-config-snapshots"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 30
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "config" {
+  bucket = aws_s3_bucket.config.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AWSConfigBucketPermissionsCheck"
+        Effect    = "Allow"
+        Principal = { Service = "config.amazonaws.com" }
+        Action    = "s3:GetBucketAcl"
+        Resource  = aws_s3_bucket.config.arn
+      },
+      {
+        Sid       = "AWSConfigBucketExistenceCheck"
+        Effect    = "Allow"
+        Principal = { Service = "config.amazonaws.com" }
+        Action    = "s3:ListBucket"
+        Resource  = aws_s3_bucket.config.arn
+      },
+      {
+        Sid       = "AWSConfigBucketDelivery"
+        Effect    = "Allow"
+        Principal = { Service = "config.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.config.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/Config/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-acl" = "bucket-owner-full-control"
+          }
+        }
+      }
+    ]
+  })
+}
+
+data "aws_iam_policy_document" "config_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["config.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "config" {
+  name               = "${local.name_prefix}-config"
+  assume_role_policy = data.aws_iam_policy_document.config_assume.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "config" {
+  role       = aws_iam_role.config.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"
+}
+
+resource "aws_config_configuration_recorder" "this" {
+  name     = "${local.name_prefix}-recorder"
+  role_arn = aws_iam_role.config.arn
+
+  recording_group {
+    all_supported                 = true
+    include_global_resource_types = true
+  }
+}
+
+resource "aws_config_delivery_channel" "this" {
+  name           = "${local.name_prefix}-delivery"
+  s3_bucket_name = aws_s3_bucket.config.id
+
+  snapshot_delivery_properties {
+    delivery_frequency = "Six_Hours"
+  }
+
+  depends_on = [
+    aws_config_configuration_recorder.this,
+    aws_s3_bucket_policy.config,
+  ]
+}
+
+resource "aws_config_configuration_recorder_status" "this" {
+  name       = aws_config_configuration_recorder.this.name
+  is_enabled = true
+
+  depends_on = [aws_config_delivery_channel.this]
+}
+
+# ────────────────────────────────────────────────────────────────────
 # Slack Webhook Secret
 # ────────────────────────────────────────────────────────────────────
 
