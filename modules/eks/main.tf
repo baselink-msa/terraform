@@ -205,6 +205,45 @@ resource "aws_eks_node_group" "system" {
 }
 
 #------------------------------------------------------------------------------
+# 4.5) Monitoring node group
+#      Prometheus/Grafana 등 관측성 워크로드를 앱 워크로드와 분리한다.
+#------------------------------------------------------------------------------
+resource "aws_eks_node_group" "monitoring" {
+  cluster_name    = aws_eks_cluster.this.name
+  node_group_name = "${var.cluster_name}-monitoring"
+  node_role_arn   = aws_iam_role.node.arn
+  subnet_ids      = var.subnet_ids
+
+  instance_types = ["t3.large"]
+  capacity_type  = var.system_node_capacity_type
+  disk_size      = var.system_node_disk_size
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
+  }
+
+  labels = {
+    workload = "monitoring"
+  }
+
+  taint {
+    key    = "monitoring"
+    value  = "true"
+    effect = "NO_SCHEDULE"
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  tags = var.tags
+
+  depends_on = [aws_iam_role_policy_attachment.node]
+}
+
+#------------------------------------------------------------------------------
 # 5) OIDC provider  ── IRSA의 토대
 #    파드가 ServiceAccount로 IAM 역할을 빌려 쓰게 해주는 '신뢰 다리'
 #    => IAM/IRSA 모듈이 이 모듈의 oidc_provider_arn output을 입력받음
